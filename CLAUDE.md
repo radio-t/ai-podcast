@@ -16,7 +16,6 @@
 ## Important Workflow Notes
 - Always run tests, linter and normalize comments BEFORE committing anything
 - Run tests and linter after making significant changes to verify functionality
-- Don't add "Generated with Claude Code" or "Co-Authored-By: Claude" to commit messages or PRs
 - Do not include "Test plan" sections in PR descriptions
 - Do not add comments that describe changes, progress, or historical modifications. 
 - Avoid comments like "new function," "added test," "now we changed this," or "previously used X, now using Y." 
@@ -24,6 +23,16 @@
 - Use `go:generate` for generating mocks, never modify generated files manually. Mocks are generated with `moq` and stored in the `mocks` package.
 - After important functionality added, update README.md accordingly
 - When merging master changes to an active branch, make sure both branches are pulled and up to date first
+
+## AI Contribution Guidelines
+- This project follows AI-Only development principles
+- All code contributions must be generated using AI assistants
+- When submitting a PR, include an "AI-Generated" tag in the PR title
+- Include the following statement in your PR description: "Generated with [AI assistant name]"
+- Human edits to AI-generated code should be minimal and only for fixing critical issues
+- AI prompts used to generate code should be included in PR descriptions when possible
+- AI contributions are subject to the same quality standards as outlined in other sections
+- For complex features, use a chain of AI-generated contributions rather than single large PRs
 
 ## Commonly Used Libraries
 - Logging: `github.com/go-pkgz/lgr`

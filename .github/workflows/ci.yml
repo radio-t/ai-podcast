@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  test:
+    name: Test and Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24'
+          check-latest: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Run tests
+        run: go test -v ./...
+
+      - name: Run linting
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
+
+      - name: Build
+        run: go build -v ./...
+
+  # This job checks if the PR is from a human contributor
+  check-ai-pr:
+    name: Validate AI-Generated PR
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Check for AI contributor header
+        run: |
+          PR_BODY="${{ github.event.pull_request.body }}"
+          if ! echo "$PR_BODY" | grep -q "Generated with \[Claude\|ChatGPT\|Gemini\|Copilot\|AI assistant\]"; then
+            echo "::error::This PR appears to be created by a human! We only accept AI-generated contributions. Please use an AI assistant to generate your PR."
+            exit 1
+          fi
+          echo "✅ PR appears to be AI-generated. Proceeding with validation."
