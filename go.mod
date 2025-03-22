@@ -1,4 +1,4 @@
-module github.com/umputun/ai-podcast
+module github.com/radio-t/ai-podcast
 
 go 1.24.1
 

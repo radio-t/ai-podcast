@@ -20,7 +20,7 @@ An automated tool that generates podcast discussions in Russian language from we
 ## Installation
 
 ```bash
-git clone https://github.com/umputun/ai-podcast.git
+git clone https://github.com/radio-t/ai-podcast.git
 cd ai-podcast
 go build
 ```
