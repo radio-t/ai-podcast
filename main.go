@@ -216,21 +216,33 @@ func fetchArticle(url string) (string, string, error) {
 	return content, title, nil
 }
 
-// generateDiscussion uses OpenAI API to create a discussion between hosts
-func generateDiscussion(articleText, title string, hosts []Host, targetDuration int, apiKey string) (Discussion, error) {
-	// Prepare host descriptions for the prompt
+// OpenAIMessage represents a message in the OpenAI API format
+type OpenAIMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// OpenAIRequest represents a request to the OpenAI API
+type OpenAIRequest struct {
+	Model       string          `json:"model"`
+	Messages    []OpenAIMessage `json:"messages"`
+	Temperature float64         `json:"temperature"`
+	MaxTokens   int             `json:"max_tokens"`
+}
+
+// prepareHostDescriptions formats host information for the prompt
+func prepareHostDescriptions(hosts []Host) string {
 	var hostDescriptions []string
 	for _, host := range hosts {
 		hostDescriptions = append(hostDescriptions,
 			fmt.Sprintf("%s (%s): %s", host.Name, host.Gender, host.Character))
 	}
+	return strings.Join(hostDescriptions, "\n")
+}
 
-	// Calculate target number of messages based on duration
-	// Assuming average message length of 30 seconds, we need more messages for longer durations
-	targetMessages := targetDuration * 2 // 2 messages per minute
-
-	// Create the system prompt for Russian podcast with character traits and duration
-	systemPrompt := fmt.Sprintf(`Generate a heated and passionate tech podcast discussion in Russian language between these hosts about the following article:
+// createDiscussionPrompt creates the system prompt for the discussion
+func createDiscussionPrompt(hostDescriptions string, targetMessages int, targetDuration int) string {
+	return fmt.Sprintf(`Generate a heated and passionate tech podcast discussion in Russian language between these hosts about the following article:
 
 %s
 
@@ -257,40 +269,19 @@ The discussion should flow like this:
 Start with a brief introduction of the article topic before jumping into the heated discussion. This introduction should be casual and engaging, giving listeners context about what they're about to hear.
 
 Make it feel like a real tech podcast discussion with passionate experts who aren't afraid to get heated and use strong language when they disagree.
-`, strings.Join(hostDescriptions, "\n"), targetMessages, targetDuration)
+`, hostDescriptions, targetMessages, targetDuration)
+}
 
-	// Prepare the API request
-	type OpenAIMessage struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
-
-	type OpenAIRequest struct {
-		Model       string          `json:"model"`
-		Messages    []OpenAIMessage `json:"messages"`
-		Temperature float64         `json:"temperature"`
-		MaxTokens   int             `json:"max_tokens"`
-	}
-
-	request := OpenAIRequest{
-		Model: "gpt-4o",
-		Messages: []OpenAIMessage{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: fmt.Sprintf("Article Title: %s\n\nArticle Content: %s\n\nPlease respond in Russian language only.", title, articleText)},
-		},
-		Temperature: 0.7,
-		MaxTokens:   4000, // Increased token limit to accommodate longer discussions
-	}
-
+// callOpenAIAPI makes a request to the OpenAI API and returns the response
+func callOpenAIAPI(request OpenAIRequest, apiKey string) (string, error) {
 	requestBody, err := json.Marshal(request)
 	if err != nil {
-		return Discussion{}, err
+		return "", err
 	}
 
-	// Make the API call
 	req, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(requestBody))
 	if err != nil {
-		return Discussion{}, err
+		return "", err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -299,13 +290,13 @@ Make it feel like a real tech podcast discussion with passionate experts who are
 	client := &http.Client{Timeout: 2 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {
-		return Discussion{}, err
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return Discussion{}, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+		return "", fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	// Parse the response
@@ -318,16 +309,18 @@ Make it feel like a real tech podcast discussion with passionate experts who are
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return Discussion{}, err
+		return "", err
 	}
 
 	if len(result.Choices) == 0 {
-		return Discussion{}, fmt.Errorf("no response from API")
+		return "", fmt.Errorf("no response from API")
 	}
 
-	content := result.Choices[0].Message.Content
+	return result.Choices[0].Message.Content, nil
+}
 
-	// Parse the JSON response
+// extractAndParseJSON extracts and parses JSON from the OpenAI response
+func extractAndParseJSON(content string) ([]Message, error) {
 	// The LLM may wrap the JSON in backticks or code block, so remove those
 	content = strings.TrimSpace(content)
 	if strings.HasPrefix(content, "```json") {
@@ -340,38 +333,77 @@ Make it feel like a real tech podcast discussion with passionate experts who are
 	content = strings.TrimSpace(content)
 
 	// Parse the JSON into our structure
-	var messages []struct {
+	var rawMessages []struct {
 		Host    string `json:"host"`
 		Content string `json:"content"`
 	}
 
-	err = json.Unmarshal([]byte(content), &messages)
+	err := json.Unmarshal([]byte(content), &rawMessages)
 	if err != nil {
 		// If unmarshaling fails, try to extract JSON from the text
 		startIdx := strings.Index(content, "[")
 		endIdx := strings.LastIndex(content, "]")
 		if startIdx >= 0 && endIdx > startIdx {
 			content = content[startIdx : endIdx+1]
-			err = json.Unmarshal([]byte(content), &messages)
+			err = json.Unmarshal([]byte(content), &rawMessages)
 		}
 
 		if err != nil {
-			return Discussion{}, fmt.Errorf("failed to parse response as JSON: %w", err)
+			return nil, fmt.Errorf("failed to parse response as JSON: %w", err)
 		}
 	}
 
 	// Convert parsed messages to our Message type
-	discussionMessages := make([]Message, len(messages))
-	for i, msg := range messages {
-		discussionMessages[i] = Message{
+	messages := make([]Message, len(rawMessages))
+	for i, msg := range rawMessages {
+		messages[i] = Message{
 			Host:    msg.Host,
 			Content: msg.Content,
 		}
 	}
 
+	return messages, nil
+}
+
+// generateDiscussion uses OpenAI API to create a discussion between hosts
+func generateDiscussion(articleText, title string, hosts []Host, targetDuration int, apiKey string) (Discussion, error) {
+	// Prepare host descriptions for the prompt
+	hostDescriptions := prepareHostDescriptions(hosts)
+
+	// Calculate target number of messages based on duration
+	// Assuming average message length of 30 seconds, we need more messages for longer durations
+	targetMessages := targetDuration * 2 // 2 messages per minute
+
+	// Create the system prompt
+	systemPrompt := createDiscussionPrompt(hostDescriptions, targetMessages, targetDuration)
+
+	// Prepare the API request
+	request := OpenAIRequest{
+		Model: "gpt-4o",
+		Messages: []OpenAIMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: fmt.Sprintf("Article Title: %s\n\nArticle Content: %s\n\nPlease respond in Russian language only.", title, articleText)},
+		},
+		Temperature: 0.7,
+		MaxTokens:   4000, // Increased token limit to accommodate longer discussions
+	}
+
+	// Call the OpenAI API
+	content, err := callOpenAIAPI(request, apiKey)
+	if err != nil {
+		return Discussion{}, err
+	}
+
+	// Extract and parse the JSON response
+	messages, err := extractAndParseJSON(content)
+	if err != nil {
+		return Discussion{}, err
+	}
+
+	// Create and return the discussion
 	discussion := Discussion{
 		Title:    title,
-		Messages: discussionMessages,
+		Messages: messages,
 	}
 
 	return discussion, nil
@@ -400,57 +432,39 @@ func estimateAudioDuration(text string) float64 {
 	return durationSeconds
 }
 
-// generateAndStreamToIcecast generates speech for each message and streams to Icecast using ffmpeg
-func generateAndStreamToIcecast(discussion Discussion, config Config) error {
-	// Map host names to their gender and voice
-	hostMap := make(map[string]struct {
-		gender string
-		voice  string
-	})
-	for _, host := range config.Hosts {
-		hostMap[host.Name] = struct {
-			gender string
-			voice  string
-		}{
-			gender: host.Gender,
-			voice:  host.Voice,
-		}
+// estimateTotalDuration estimates the total duration of all messages
+func estimateTotalDuration(messages []Message) float64 {
+	var totalDuration float64
+	for _, msg := range messages {
+		totalDuration += estimateAudioDuration(msg.Content)
 	}
+	return totalDuration
+}
 
-	// Estimate total discussion duration
-	var totalEstimatedDuration float64
-	for _, msg := range discussion.Messages {
-		totalEstimatedDuration += estimateAudioDuration(msg.Content)
+// calculateSpeechSpeed determines the speech speed factor to match target duration
+func calculateSpeechSpeed(estimatedDuration float64, targetDurationMinutes int) float64 {
+	speechSpeed := 1.0
+	if estimatedDuration <= 0 {
+		return speechSpeed
 	}
-
-	fmt.Printf("Estimated podcast duration: %.1f minutes\n", totalEstimatedDuration/60.0)
 
 	// Target duration in seconds
-	targetDurationSeconds := float64(config.TargetDuration * 60)
+	targetDurationSeconds := float64(targetDurationMinutes * 60)
+	
+	// If estimated duration is significantly different from target, adjust speed
+	// but keep it within reasonable bounds (0.8-1.2)
+	speechSpeed = targetDurationSeconds / estimatedDuration
+	return math.Max(0.8, math.Min(1.2, speechSpeed))
+}
 
-	// Adjust speech speed if necessary
-	speechSpeed := 1.0
-	if totalEstimatedDuration > 0 {
-		// If estimated duration is significantly different from target, adjust speed
-		// but keep it within reasonable bounds (0.8-1.2)
-		speechSpeed = targetDurationSeconds / totalEstimatedDuration
-		speechSpeed = math.Max(0.8, math.Min(1.2, speechSpeed))
-
-		if speechSpeed != 1.0 {
-			fmt.Printf("Adjusting speech speed to %.2f to match target duration\n", speechSpeed)
-		}
-	}
-
-	// Create a temporary directory to store the audio segments
-	tempDir, err := os.MkdirTemp("", "podcast")
-	if err != nil {
-		return fmt.Errorf("failed to create temp directory: %w", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	// Generate speech for all messages first
-	audioFiles := []string{}
-	for i, msg := range discussion.Messages {
+// generateSpeechSegments generates speech for all messages in the discussion
+func generateSpeechSegments(messages []Message, hostMap map[string]struct {
+	gender string
+	voice  string
+}, speechSpeed float64, apiKey string, tempDir string) ([]string, error) {
+	audioFiles := make([]string, 0, len(messages))
+	
+	for i, msg := range messages {
 		// Get gender and voice for the host
 		gender := "female" // default
 		voice := "nova"    // default
@@ -460,35 +474,28 @@ func generateAndStreamToIcecast(discussion Discussion, config Config) error {
 		}
 
 		fmt.Printf("Generating speech for %s (message %d/%d)...\n",
-			msg.Host, i+1, len(discussion.Messages))
+			msg.Host, i+1, len(messages))
 
 		// Generate speech with OpenAI TTS
-		audioData, err := generateOpenAITTS(msg.Content, "ru", gender, voice, speechSpeed, config.OpenAIAPIKey)
+		audioData, err := generateOpenAITTS(msg.Content, "ru", gender, voice, speechSpeed, apiKey)
 		if err != nil {
-			return fmt.Errorf("failed to generate speech for message %d: %w", i, err)
+			return nil, fmt.Errorf("failed to generate speech for message %d: %w", i, err)
 		}
 
 		// Create a file for the audio
 		filename := fmt.Sprintf("%s/segment_%03d.mp3", tempDir, i)
 		err = os.WriteFile(filename, audioData, 0644)
 		if err != nil {
-			return fmt.Errorf("failed to write audio data: %w", err)
+			return nil, fmt.Errorf("failed to write audio data: %w", err)
 		}
 		audioFiles = append(audioFiles, filename)
 	}
+	
+	return audioFiles, nil
+}
 
-	// Create a concatenation file list
-	concatFile := fmt.Sprintf("%s/concat.txt", tempDir)
-	var concatContent strings.Builder
-	for _, file := range audioFiles {
-		concatContent.WriteString(fmt.Sprintf("file '%s'\n", file))
-	}
-	err = os.WriteFile(concatFile, []byte(concatContent.String()), 0644)
-	if err != nil {
-		return fmt.Errorf("failed to write concat file: %w", err)
-	}
-
-	// Concatenate all files and stream to Icecast using ffmpeg
+// streamToIcecast streams concatenated audio files to Icecast server
+func streamToIcecast(concatFile string, config Config) error {
 	fmt.Printf("Streaming to Icecast server at %s%s...\n", config.IcecastURL, config.IcecastMount)
 
 	// Construct Icecast URL with authentication
@@ -511,12 +518,180 @@ func generateAndStreamToIcecast(discussion Discussion, config Config) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	err = cmd.Run()
+	err := cmd.Run()
 	if err != nil {
 		return fmt.Errorf("ffmpeg streaming failed: %w", err)
 	}
+	
+	return nil
+}
+
+// generateAndStreamToIcecast generates speech for each message and streams to Icecast using ffmpeg
+func generateAndStreamToIcecast(discussion Discussion, config Config) error {
+	// Map host names to their gender and voice
+	hostMap := createHostMap(config.Hosts)
+
+	// Estimate total discussion duration
+	totalEstimatedDuration := estimateTotalDuration(discussion.Messages)
+	fmt.Printf("Estimated podcast duration: %.1f minutes\n", totalEstimatedDuration/60.0)
+
+	// Calculate speech speed
+	speechSpeed := calculateSpeechSpeed(totalEstimatedDuration, config.TargetDuration)
+	if speechSpeed != 1.0 {
+		fmt.Printf("Adjusting speech speed to %.2f to match target duration\n", speechSpeed)
+	}
+
+	// Create a temporary directory to store the audio segments
+	tempDir, err := os.MkdirTemp("", "podcast")
+	if err != nil {
+		return fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Generate speech for all messages
+	audioFiles, err := generateSpeechSegments(discussion.Messages, hostMap, speechSpeed, config.OpenAIAPIKey, tempDir)
+	if err != nil {
+		return err
+	}
+
+	// Create concat file for ffmpeg
+	concatFile, err := saveToConcatFile(tempDir, audioFiles)
+	if err != nil {
+		return err
+	}
+
+	// Stream to Icecast
+	err = streamToIcecast(concatFile, config)
+	if err != nil {
+		return err
+	}
 
 	fmt.Println("Podcast streaming completed successfully!")
+	return nil
+}
+
+// SpeechGenerationRequest contains all parameters needed for TTS generation
+type SpeechGenerationRequest struct {
+	msg    Message
+	index  int
+	gender string
+	voice  string
+	speed  float64
+	apiKey string
+}
+
+// createHostMap maps host names to their gender and voice settings
+func createHostMap(hosts []Host) map[string]struct {
+	gender string
+	voice  string
+} {
+	hostMap := make(map[string]struct {
+		gender string
+		voice  string
+	})
+	for _, host := range hosts {
+		hostMap[host.Name] = struct {
+			gender string
+			voice  string
+		}{
+			gender: host.Gender,
+			voice:  host.Voice,
+		}
+	}
+	return hostMap
+}
+
+// speechGenerationWorker processes requests from the request channel and sends results to the result channel
+func speechGenerationWorker(requestChan <-chan SpeechGenerationRequest, resultChan chan<- SpeechSegment, stopChan <-chan struct{}) {
+	for {
+		select {
+		case <-stopChan:
+			fmt.Println("Background worker stopped")
+			return
+		case req := <-requestChan:
+			segmentStartTime := time.Now()
+			fmt.Printf("Generating speech for message %d from %s...\n", req.index, req.msg.Host)
+			audioData, err := generateOpenAITTS(req.msg.Content, "ru", req.gender, req.voice, req.speed, req.apiKey)
+			if err != nil {
+				fmt.Printf("Error generating speech for message %d: %v\n", req.index, err)
+			} else {
+				segmentDuration := time.Since(segmentStartTime)
+				fmt.Printf("Successfully generated speech for message %d (took %.1f seconds)\n", req.index, segmentDuration.Seconds())
+			}
+			resultChan <- SpeechSegment{
+				AudioData: audioData,
+				Host:      req.msg.Host,
+				Index:     req.index,
+				Error:     err,
+				msg:       req.msg,
+			}
+		}
+	}
+}
+
+// createSpeechRequest creates a speech generation request for the given message
+func createSpeechRequest(msg Message, index int, hostMap map[string]struct {
+	gender string
+	voice  string
+}, apiKey string) SpeechGenerationRequest {
+	gender := "female" // default
+	voice := "nova"    // default
+	if info, ok := hostMap[msg.Host]; ok {
+		gender = info.gender
+		voice = info.voice
+	}
+
+	return SpeechGenerationRequest{
+		msg:    msg,
+		index:  index,
+		gender: gender,
+		voice:  voice,
+		speed:  1.0,
+		apiKey: apiKey,
+	}
+}
+
+// saveToConcatFile creates a concatenation file for ffmpeg
+func saveToConcatFile(tempDir string, audioFiles []string) (string, error) {
+	concatFile := fmt.Sprintf("%s/concat.txt", tempDir)
+	var concatContent strings.Builder
+	for _, file := range audioFiles {
+		concatContent.WriteString(fmt.Sprintf("file '%s'\n", file))
+	}
+	err := os.WriteFile(concatFile, []byte(concatContent.String()), 0644)
+	if err != nil {
+		return "", fmt.Errorf("failed to write concat file: %w", err)
+	}
+	return concatFile, nil
+}
+
+// concatenateAudioFiles uses ffmpeg to concatenate audio files into a single output file
+func concatenateAudioFiles(concatFile string, outputFile string) error {
+	fmt.Println("Concatenating audio files...")
+	concatStartTime := time.Now()
+	
+	args := []string{
+		"-hide_banner",
+		"-loglevel", "error",
+		"-f", "concat",
+		"-safe", "0",
+		"-i", concatFile,
+		"-c", "copy",
+		outputFile,
+	}
+
+	cmd := exec.Command("ffmpeg", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("failed to concatenate audio files: %w", err)
+	}
+	
+	concatDuration := time.Since(concatStartTime)
+	fmt.Printf("Concatenation completed in %.1f seconds\n", concatDuration.Seconds())
+	fmt.Printf("Podcast saved to %s\n", outputFile)
 	return nil
 }
 
@@ -534,29 +709,10 @@ func generateAndPlayLocally(discussion Discussion, config Config) error {
 	fmt.Printf("Created temporary directory: %s\n", tempDir)
 
 	// Map host names to their gender and voice
-	hostMap := make(map[string]struct {
-		gender string
-		voice  string
-	})
-	for _, host := range config.Hosts {
-		hostMap[host.Name] = struct {
-			gender string
-			voice  string
-		}{
-			gender: host.Gender,
-			voice:  host.Voice,
-		}
-	}
+	hostMap := createHostMap(config.Hosts)
 
 	// Create channels for communication between main thread and background workers
-	requestChan := make(chan struct {
-		msg    Message
-		index  int
-		gender string
-		voice  string
-		speed  float64
-		apiKey string
-	}, len(discussion.Messages))
+	requestChan := make(chan SpeechGenerationRequest, len(discussion.Messages))
 	resultChan := make(chan SpeechSegment, len(discussion.Messages))
 	stopChan := make(chan struct{})
 
@@ -565,63 +721,18 @@ func generateAndPlayLocally(discussion Discussion, config Config) error {
 	segmentBuffer := make([]SpeechSegment, 0, bufferSize)
 	bufferMutex := sync.Mutex{}
 
-	fmt.Println("Starting background worker for speech generation...")
 	// Start background worker for speech generation
-	go func() {
-		for {
-			select {
-			case <-stopChan:
-				fmt.Println("Background worker stopped")
-				return
-			case req := <-requestChan:
-				segmentStartTime := time.Now()
-				fmt.Printf("Generating speech for message %d from %s...\n", req.index, req.msg.Host)
-				audioData, err := generateOpenAITTS(req.msg.Content, "ru", req.gender, req.voice, 1.0, req.apiKey)
-				if err != nil {
-					fmt.Printf("Error generating speech for message %d: %v\n", req.index, err)
-				} else {
-					segmentDuration := time.Since(segmentStartTime)
-					fmt.Printf("Successfully generated speech for message %d (took %.1f seconds)\n", req.index, segmentDuration.Seconds())
-				}
-				resultChan <- SpeechSegment{
-					AudioData: audioData,
-					Host:      req.msg.Host,
-					Index:     req.index,
-					Error:     err,
-					msg:       req.msg,
-				}
-			}
-		}
-	}()
+	fmt.Println("Starting background worker for speech generation...")
+	go speechGenerationWorker(requestChan, resultChan, stopChan)
 
 	// Start pre-generating segments
 	fmt.Println("Starting pre-generation of segments...")
 	currentIndex := 0
 	for i := 0; i < bufferSize && currentIndex < len(discussion.Messages); i++ {
 		msg := discussion.Messages[currentIndex]
-		gender := "female" // default
-		voice := "nova"    // default
-		if info, ok := hostMap[msg.Host]; ok {
-			gender = info.gender
-			voice = info.voice
-		}
-
+		req := createSpeechRequest(msg, currentIndex, hostMap, config.OpenAIAPIKey)
 		fmt.Printf("Requesting generation of message %d from %s...\n", currentIndex, msg.Host)
-		requestChan <- struct {
-			msg    Message
-			index  int
-			gender string
-			voice  string
-			speed  float64
-			apiKey string
-		}{
-			msg:    msg,
-			index:  currentIndex,
-			gender: gender,
-			voice:  voice,
-			speed:  1.0,
-			apiKey: config.OpenAIAPIKey,
-		}
+		requestChan <- req
 		currentIndex++
 	}
 
@@ -634,29 +745,9 @@ func generateAndPlayLocally(discussion Discussion, config Config) error {
 		// Start generating the next segment if we're not at the end
 		if currentIndex < len(discussion.Messages) {
 			msg := discussion.Messages[currentIndex]
-			gender := "female" // default
-			voice := "nova"    // default
-			if info, ok := hostMap[msg.Host]; ok {
-				gender = info.gender
-				voice = info.voice
-			}
-
+			req := createSpeechRequest(msg, currentIndex, hostMap, config.OpenAIAPIKey)
 			fmt.Printf("Requesting generation of message %d from %s...\n", currentIndex, msg.Host)
-			requestChan <- struct {
-				msg    Message
-				index  int
-				gender string
-				voice  string
-				speed  float64
-				apiKey string
-			}{
-				msg:    msg,
-				index:  currentIndex,
-				gender: gender,
-				voice:  voice,
-				speed:  1.0,
-				apiKey: config.OpenAIAPIKey,
-			}
+			requestChan <- req
 			currentIndex++
 		}
 
@@ -734,41 +825,15 @@ func generateAndPlayLocally(discussion Discussion, config Config) error {
 	if config.OutputFile != "" {
 		fmt.Printf("\nSaving podcast to %s...\n", config.OutputFile)
 
-		// Create a concatenation file list
-		concatFile := fmt.Sprintf("%s/concat.txt", tempDir)
-		var concatContent strings.Builder
-		for _, file := range audioFiles {
-			concatContent.WriteString(fmt.Sprintf("file '%s'\n", file))
-		}
-		err := os.WriteFile(concatFile, []byte(concatContent.String()), 0644)
+		concatFile, err := saveToConcatFile(tempDir, audioFiles)
 		if err != nil {
-			return fmt.Errorf("failed to write concat file: %w", err)
+			return err
 		}
 
-		fmt.Println("Concatenating audio files...")
-		concatStartTime := time.Now()
-		// Concatenate all files using ffmpeg
-		args := []string{
-			"-hide_banner",
-			"-loglevel", "error",
-			"-f", "concat",
-			"-safe", "0",
-			"-i", concatFile,
-			"-c", "copy",
-			config.OutputFile,
-		}
-
-		cmd := exec.Command("ffmpeg", args...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		err = cmd.Run()
+		err = concatenateAudioFiles(concatFile, config.OutputFile)
 		if err != nil {
-			return fmt.Errorf("failed to concatenate audio files: %w", err)
+			return err
 		}
-		concatDuration := time.Since(concatStartTime)
-		fmt.Printf("Concatenation completed in %.1f seconds\n", concatDuration.Seconds())
-		fmt.Printf("Podcast saved to %s\n", config.OutputFile)
 	}
 
 	totalDuration := time.Since(startTime)
@@ -825,13 +890,11 @@ func playAudioFile(filename string) error {
 	return nil
 }
 
-// generateOpenAITTS uses OpenAI's Chat Completions API to generate natural speech
-func generateOpenAITTS(text, lang, gender, voice string, speed float64, apiKey string) ([]byte, error) {
-	// Map host characters to speaking styles
-	speakingStyle := ""
+// getSpeakingStyle returns the appropriate speaking style based on the voice
+func getSpeakingStyle(voice string) string {
 	switch voice {
 	case "onyx": // Алексей - optimistic and open-minded
-		speakingStyle = `You are Алексей, a young tech enthusiast who's always excited about new developments. Your speech style is:
+		return `You are Алексей, a young tech enthusiast who's always excited about new developments. Your speech style is:
 - Super energetic and fast-paced, like you're about to burst with excitement
 - Use lots of modern tech slang and casual expressions
 - Speak with a bright, enthusiastic tone, like you're sharing something amazing
@@ -842,7 +905,7 @@ func generateOpenAITTS(text, lang, gender, voice string, speed float64, apiKey s
 - Use informal Russian expressions and modern tech slang naturally
 - Get genuinely excited and sometimes interrupt others with your enthusiasm`
 	case "nova": // Мария - analytical and pragmatic
-		speakingStyle = `You are Мария, an experienced economist with deep tech knowledge. Your speech style is:
+		return `You are Мария, an experienced economist with deep tech knowledge. Your speech style is:
 - Confident and direct, but still casual and engaging
 - Use data points and statistics naturally, but explain them in simple terms
 - Speak with authority but keep it conversational
@@ -853,7 +916,7 @@ func generateOpenAITTS(text, lang, gender, voice string, speed float64, apiKey s
 - Use casual expressions and occasional strong language when appropriate
 - Get genuinely frustrated when others don't see the obvious`
 	case "echo": // Дмитрий - skeptical and traditionalist
-		speakingStyle = `You are Дмитрий, a seasoned tech professional with a healthy dose of skepticism. Your speech style is:
+		return `You are Дмитрий, a seasoned tech professional with a healthy dose of skepticism. Your speech style is:
 - Measured but with strong opinions and emotions
 - Use dry humor and sarcasm liberally
 - Add frequent "ну..." and "хм..." reactions
@@ -864,57 +927,39 @@ func generateOpenAITTS(text, lang, gender, voice string, speed float64, apiKey s
 - Show your personality through passionate, sometimes heated responses
 - Get genuinely angry when people ignore obvious risks
 - Use casual Russian expressions and occasional strong language`
+	default:
+		return ""
 	}
+}
 
-	// Prepare the API request
-	type OpenAIMessage struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
+// createTTSSystemPrompt creates the system prompt for TTS generation
+func createTTSSystemPrompt(speakingStyle string) string {
+	return speakingStyle + "\n\nYou are participating in a heated tech podcast discussion. Speak the following text in Russian language with your unique personality and style. Remember to:\n" +
+		"- Use very natural, casual conversational style\n" +
+		"- Add strong emotions and emphasis\n" +
+		"- Include lots of natural reactions and interjections\n" +
+		"- Use informal Russian expressions and modern slang\n" +
+		"- Speak like you're having a real argument with friends\n" +
+		"- Don't be afraid to use strong language when appropriate\n" +
+		"- Show genuine emotions - get excited, frustrated, angry\n" +
+		"- Interrupt others when you're passionate about something\n" +
+		"- Use casual expressions and modern tech slang naturally"
+}
 
-	type OpenAIRequest struct {
-		Model      string          `json:"model"`
-		Messages   []OpenAIMessage `json:"messages"`
-		Modalities []string        `json:"modalities"`
-		Audio      struct {
-			Voice  string `json:"voice"`
-			Format string `json:"format"`
-		} `json:"audio"`
-		Store bool `json:"store"`
-	}
+// OpenAITTSRequest represents the request structure for OpenAI TTS API
+type OpenAITTSRequest struct {
+	Model      string          `json:"model"`
+	Messages   []OpenAIMessage `json:"messages"`
+	Modalities []string        `json:"modalities"`
+	Audio      struct {
+		Voice  string `json:"voice"`
+		Format string `json:"format"`
+	} `json:"audio"`
+	Store bool `json:"store"`
+}
 
-	request := OpenAIRequest{
-		Model:      "gpt-4o-audio-preview",
-		Modalities: []string{"text", "audio"},
-		Audio: struct {
-			Voice  string `json:"voice"`
-			Format string `json:"format"`
-		}{
-			Voice:  voice,
-			Format: "mp3",
-		},
-		Store: true,
-		Messages: []OpenAIMessage{
-			{
-				Role: "system",
-				Content: speakingStyle + "\n\nYou are participating in a heated tech podcast discussion. Speak the following text in Russian language with your unique personality and style. Remember to:\n" +
-					"- Use very natural, casual conversational style\n" +
-					"- Add strong emotions and emphasis\n" +
-					"- Include lots of natural reactions and interjections\n" +
-					"- Use informal Russian expressions and modern slang\n" +
-					"- Speak like you're having a real argument with friends\n" +
-					"- Don't be afraid to use strong language when appropriate\n" +
-					"- Show genuine emotions - get excited, frustrated, angry\n" +
-					"- Interrupt others when you're passionate about something\n" +
-					"- Use casual expressions and modern tech slang naturally",
-			},
-			{
-				Role:    "user",
-				Content: text,
-			},
-		},
-	}
-
+// callOpenAITTSAPI makes the API call to OpenAI for text-to-speech
+func callOpenAITTSAPI(request OpenAITTSRequest, apiKey string) ([]byte, error) {
 	requestBody, err := json.Marshal(request)
 	if err != nil {
 		return nil, err
@@ -968,6 +1013,42 @@ func generateOpenAITTS(text, lang, gender, voice string, speed float64, apiKey s
 	}
 
 	return audioData, nil
+}
+
+// generateOpenAITTS uses OpenAI's Chat Completions API to generate natural speech
+func generateOpenAITTS(text, lang, gender, voice string, speed float64, apiKey string) ([]byte, error) {
+	// Get the appropriate speaking style for this voice
+	speakingStyle := getSpeakingStyle(voice)
+	
+	// Create the system prompt
+	systemPrompt := createTTSSystemPrompt(speakingStyle)
+
+	// Prepare the API request
+	request := OpenAITTSRequest{
+		Model:      "gpt-4o-audio-preview",
+		Modalities: []string{"text", "audio"},
+		Audio: struct {
+			Voice  string `json:"voice"`
+			Format string `json:"format"`
+		}{
+			Voice:  voice,
+			Format: "mp3",
+		},
+		Store: true,
+		Messages: []OpenAIMessage{
+			{
+				Role:    "system",
+				Content: systemPrompt,
+			},
+			{
+				Role:    "user",
+				Content: text,
+			},
+		},
+	}
+
+	// Call the TTS API and return the audio data
+	return callOpenAITTSAPI(request, apiKey)
 }
 
 // truncateString truncates a string to the specified length and adds "..." if truncated
