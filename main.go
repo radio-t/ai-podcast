@@ -165,8 +165,9 @@ func run(config Config) error {
 }
 
 // fetchArticle downloads and extracts text from the given URL
-func fetchArticle(url string) (string, string, error) {
+func fetchArticle(url string) (content, title string, err error) {
 	// Fetch the page
+	// #nosec G107 -- URL is provided by command-line flag
 	resp, err := http.Get(url)
 	if err != nil {
 		return "", "", err
@@ -184,7 +185,7 @@ func fetchArticle(url string) (string, string, error) {
 	}
 
 	// Extract title
-	title := doc.Find("title").Text()
+	title = doc.Find("title").Text()
 
 	// Extract article content - this is a simplified approach
 	var articleText strings.Builder
@@ -192,13 +193,13 @@ func fetchArticle(url string) (string, string, error) {
 	// First try to find article content in common containers
 	article := doc.Find("article, .article, .post, .content, main")
 	if article.Length() > 0 {
-		article.Find("p").Each(func(i int, s *goquery.Selection) {
+		article.Find("p").Each(func(_ int, s *goquery.Selection) {
 			articleText.WriteString(s.Text())
 			articleText.WriteString("\n\n")
 		})
 	} else {
 		// Fallback to all paragraphs
-		doc.Find("p").Each(func(i int, s *goquery.Selection) {
+		doc.Find("p").Each(func(_ int, s *goquery.Selection) {
 			// Skip very short paragraphs which are likely not article content
 			if len(s.Text()) > 50 {
 				articleText.WriteString(s.Text())
@@ -208,7 +209,7 @@ func fetchArticle(url string) (string, string, error) {
 	}
 
 	// Limit article length for API calls
-	content := articleText.String()
+	content = articleText.String()
 	if len(content) > 8000 {
 		content = content[:8000] + "..."
 	}
@@ -232,7 +233,7 @@ type OpenAIRequest struct {
 
 // prepareHostDescriptions formats host information for the prompt
 func prepareHostDescriptions(hosts []Host) string {
-	var hostDescriptions []string
+	hostDescriptions := make([]string, 0, len(hosts))
 	for _, host := range hosts {
 		hostDescriptions = append(hostDescriptions,
 			fmt.Sprintf("%s (%s): %s", host.Name, host.Gender, host.Character))
@@ -241,7 +242,7 @@ func prepareHostDescriptions(hosts []Host) string {
 }
 
 // createDiscussionPrompt creates the system prompt for the discussion
-func createDiscussionPrompt(hostDescriptions string, targetMessages int, targetDuration int) string {
+func createDiscussionPrompt(hostDescriptions string, targetMessages, targetDuration int) string {
 	return fmt.Sprintf(`Generate a heated and passionate tech podcast discussion in Russian language between these hosts about the following article:
 
 %s
@@ -477,14 +478,14 @@ func generateSpeechSegments(messages []Message, hostMap map[string]struct {
 			msg.Host, i+1, len(messages))
 
 		// Generate speech with OpenAI TTS
-		audioData, err := generateOpenAITTS(msg.Content, "ru", gender, voice, speechSpeed, apiKey)
+		audioData, err := generateOpenAITTS(msg.Content, gender, voice, speechSpeed, apiKey)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate speech for message %d: %w", i, err)
 		}
 
 		// Create a file for the audio
 		filename := fmt.Sprintf("%s/segment_%03d.mp3", tempDir, i)
-		err = os.WriteFile(filename, audioData, 0644)
+		err = os.WriteFile(filename, audioData, 0o600)
 		if err != nil {
 			return nil, fmt.Errorf("failed to write audio data: %w", err)
 		}
@@ -514,6 +515,7 @@ func streamToIcecast(concatFile string, config Config) error {
 		icecastURL,
 	}
 
+	// #nosec G204 -- Arguments are constructed internally, not from external input
 	cmd := exec.Command("ffmpeg", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -611,7 +613,7 @@ func speechGenerationWorker(requestChan <-chan SpeechGenerationRequest, resultCh
 		case req := <-requestChan:
 			segmentStartTime := time.Now()
 			fmt.Printf("Generating speech for message %d from %s...\n", req.index, req.msg.Host)
-			audioData, err := generateOpenAITTS(req.msg.Content, "ru", req.gender, req.voice, req.speed, req.apiKey)
+			audioData, err := generateOpenAITTS(req.msg.Content, req.gender, req.voice, req.speed, req.apiKey)
 			if err != nil {
 				fmt.Printf("Error generating speech for message %d: %v\n", req.index, err)
 			} else {
@@ -658,7 +660,7 @@ func saveToConcatFile(tempDir string, audioFiles []string) (string, error) {
 	for _, file := range audioFiles {
 		concatContent.WriteString(fmt.Sprintf("file '%s'\n", file))
 	}
-	err := os.WriteFile(concatFile, []byte(concatContent.String()), 0644)
+	err := os.WriteFile(concatFile, []byte(concatContent.String()), 0o600)
 	if err != nil {
 		return "", fmt.Errorf("failed to write concat file: %w", err)
 	}
@@ -666,7 +668,7 @@ func saveToConcatFile(tempDir string, audioFiles []string) (string, error) {
 }
 
 // concatenateAudioFiles uses ffmpeg to concatenate audio files into a single output file
-func concatenateAudioFiles(concatFile string, outputFile string) error {
+func concatenateAudioFiles(concatFile, outputFile string) error {
 	fmt.Println("Concatenating audio files...")
 	concatStartTime := time.Now()
 	
@@ -680,6 +682,7 @@ func concatenateAudioFiles(concatFile string, outputFile string) error {
 		outputFile,
 	}
 
+	// #nosec G204 -- Arguments are constructed internally, not from external input
 	cmd := exec.Command("ffmpeg", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -784,7 +787,7 @@ func generateAndPlayLocally(discussion Discussion, config Config) error {
 			// Create a temporary file for the audio
 			filename := fmt.Sprintf("%s/segment_%03d.mp3", tempDir, playedIndex)
 			fmt.Printf("Writing segment %d to file %s...\n", playedIndex, filename)
-			err := os.WriteFile(filename, nextSegment.AudioData, 0644)
+			err := os.WriteFile(filename, nextSegment.AudioData, 0o600)
 			if err != nil {
 				fmt.Printf("Error writing segment %d: %v\n", playedIndex, err)
 				close(stopChan)
@@ -863,8 +866,10 @@ func playAudioFile(filename string) error {
 		for _, player := range players {
 			if _, err := exec.LookPath(player); err == nil {
 				if player == "aplay" {
+					// #nosec G204 -- Player is selected from a whitelist of known audio players
 					cmd = exec.Command(player, "-q", filename)
 				} else {
+					// #nosec G204 -- Player is selected from a whitelist of known audio players
 					cmd = exec.Command(player, filename, "-nodisp", "-autoexit", "-really-quiet")
 				}
 				break
@@ -1016,7 +1021,7 @@ func callOpenAITTSAPI(request OpenAITTSRequest, apiKey string) ([]byte, error) {
 }
 
 // generateOpenAITTS uses OpenAI's Chat Completions API to generate natural speech
-func generateOpenAITTS(text, lang, gender, voice string, speed float64, apiKey string) ([]byte, error) {
+func generateOpenAITTS(text, _ /* gender */, voice string, _ /* speed */ float64, apiKey string) ([]byte, error) {
 	// Get the appropriate speaking style for this voice
 	speakingStyle := getSpeakingStyle(voice)
 	
