@@ -41,5 +41,26 @@ func TestCreateHostMap(t *testing.T) {
 func TestCreateHostMapEmpty(t *testing.T) {
 	var hosts []podcast.Host
 	hostMap := podcast.CreateHostMap(hosts)
-	assert.Len(t, hostMap, 0)
+	assert.Empty(t, hostMap)
+}
+
+func TestPodcastCreateHostMap(t *testing.T) {
+	hosts := []podcast.Host{
+		{Name: "Alice", Gender: "female", Voice: "nova", Character: "Tech expert"},
+		{Name: "Bob", Gender: "male", Voice: "echo", Character: "Economist"},
+	}
+
+	hostMap := podcast.CreateHostMap(hosts)
+
+	assert.Len(t, hostMap, 2)
+
+	alice, ok := hostMap["Alice"]
+	assert.True(t, ok)
+	assert.Equal(t, "female", alice.Gender)
+	assert.Equal(t, "nova", alice.Voice)
+
+	bob, ok := hostMap["Bob"]
+	assert.True(t, ok)
+	assert.Equal(t, "male", bob.Gender)
+	assert.Equal(t, "echo", bob.Voice)
 }

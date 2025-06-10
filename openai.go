@@ -13,66 +13,73 @@ import (
 	"github.com/radio-t/ai-podcast/podcast"
 )
 
+//go:generate moq -out mocks/http_client.go -pkg mocks -skip-ensure -fmt goimports . HTTPClient
+
+// HTTPClient defines the interface for HTTP client operations
+type HTTPClient interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
 // OpenAIService implements OpenAI API interactions
 type OpenAIService struct {
-	apiKey     string
-	httpClient *http.Client
+	apiKey		string
+	httpClient	HTTPClient
 }
 
 // NewOpenAIService creates a new OpenAI service
-func NewOpenAIService(apiKey string, httpClient *http.Client) *OpenAIService {
+func NewOpenAIService(apiKey string, httpClient HTTPClient) *OpenAIService {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 2 * time.Minute}
 	}
 	return &OpenAIService{
-		apiKey:     apiKey,
-		httpClient: httpClient,
+		apiKey:		apiKey,
+		httpClient:	httpClient,
 	}
 }
 
 // OpenAIMessage represents a message in the OpenAI API format
 type OpenAIMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role	string	`json:"role"`
+	Content	string	`json:"content"`
 }
 
 // OpenAIRequest represents a request to the OpenAI API
 type OpenAIRequest struct {
-	Model       string          `json:"model"`
-	Messages    []OpenAIMessage `json:"messages"`
-	Temperature float64         `json:"temperature"`
-	MaxTokens   int             `json:"max_tokens"`
+	Model		string		`json:"model"`
+	Messages	[]OpenAIMessage	`json:"messages"`
+	Temperature	float64		`json:"temperature"`
+	MaxTokens	int		`json:"max_tokens"`
 }
 
 // OpenAITTSRequest represents the request structure for OpenAI TTS API
 type OpenAITTSRequest struct {
-	Model      string          `json:"model"`
-	Messages   []OpenAIMessage `json:"messages"`
-	Modalities []string        `json:"modalities"`
-	Audio      struct {
-		Voice  string `json:"voice"`
-		Format string `json:"format"`
-	} `json:"audio"`
-	Store bool `json:"store"`
+	Model		string		`json:"model"`
+	Messages	[]OpenAIMessage	`json:"messages"`
+	Modalities	[]string	`json:"modalities"`
+	Audio		struct {
+		Voice	string	`json:"voice"`
+		Format	string	`json:"format"`
+	}	`json:"audio"`
+	Store	bool	`json:"store"`
 }
 
 // GenerateDiscussion uses OpenAI API to create a discussion between hosts
 func (s *OpenAIService) GenerateDiscussion(params podcast.GenerateDiscussionParams) (podcast.Discussion, error) {
 	// calculate target number of messages based on duration
-	targetMessages := params.TargetDuration * 2 // 2 messages per minute
+	targetMessages := params.TargetDuration * 2	// 2 messages per minute
 
 	// create the system prompt
 	systemPrompt := s.createDiscussionPrompt(params.Hosts, targetMessages, params.TargetDuration)
 
 	// prepare the API request
 	request := OpenAIRequest{
-		Model: "gpt-4o",
+		Model:	"gpt-4o",
 		Messages: []OpenAIMessage{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: fmt.Sprintf("Article Title: %s\n\nArticle Content: %s\n\nPlease respond in Russian language only.", params.Title, params.ArticleText)},
 		},
-		Temperature: 0.7,
-		MaxTokens:   4000,
+		Temperature:	0.7,
+		MaxTokens:	4000,
 	}
 
 	// call the OpenAI API
@@ -88,8 +95,8 @@ func (s *OpenAIService) GenerateDiscussion(params podcast.GenerateDiscussionPara
 	}
 
 	return podcast.Discussion{
-		Title:    params.Title,
-		Messages: messages,
+		Title:		params.Title,
+		Messages:	messages,
 	}, nil
 }
 
@@ -101,9 +108,9 @@ func (s *OpenAIService) GenerateSpeech(text, voice string) ([]byte, error) {
 
 	// prepare the API request
 	request := OpenAITTSRequest{
-		Model:      "gpt-4o-audio-preview",
-		Modalities: []string{"text", "audio"},
-		Store:      true,
+		Model:		"gpt-4o-audio-preview",
+		Modalities:	[]string{"text", "audio"},
+		Store:		true,
 		Messages: []OpenAIMessage{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: text},
@@ -275,8 +282,8 @@ func (s *OpenAIService) extractMessages(content string) ([]podcast.Message, erro
 
 	// parse the JSON into our structure
 	var rawMessages []struct {
-		Host    string `json:"host"`
-		Content string `json:"content"`
+		Host	string	`json:"host"`
+		Content	string	`json:"content"`
 	}
 
 	err := json.Unmarshal([]byte(content), &rawMessages)
@@ -298,8 +305,8 @@ func (s *OpenAIService) extractMessages(content string) ([]podcast.Message, erro
 	messages := make([]podcast.Message, len(rawMessages))
 	for i, msg := range rawMessages {
 		messages[i] = podcast.Message{
-			Host:    msg.Host,
-			Content: msg.Content,
+			Host:		msg.Host,
+			Content:	msg.Content,
 		}
 	}
 
@@ -309,7 +316,7 @@ func (s *OpenAIService) extractMessages(content string) ([]podcast.Message, erro
 // getSpeakingStyle returns the appropriate speaking style based on the voice
 func getSpeakingStyle(voice string) string {
 	switch voice {
-	case "onyx": // Алексей - optimistic and open-minded
+	case "onyx":	// Алексей - optimistic and open-minded
 		return `You are Алексей, a young tech enthusiast who's always excited about new developments. Your speech style is:
 - Super energetic and fast-paced, like you're about to burst with excitement
 - Use lots of modern tech slang and casual expressions
@@ -320,7 +327,7 @@ func getSpeakingStyle(voice string) string {
 - Show your personality through your voice - be the tech optimist who sees possibilities everywhere
 - Use informal Russian expressions and modern tech slang naturally
 - Get genuinely excited and sometimes interrupt others with your enthusiasm`
-	case "nova": // ð�ария - analytical and pragmatic
+	case "nova":	// мария - analytical and pragmatic
 		return `You are Мария, an experienced economist with deep tech knowledge. Your speech style is:
 - Confident and direct, but still casual and engaging
 - Use data points and statistics naturally, but explain them in simple terms
@@ -331,7 +338,7 @@ func getSpeakingStyle(voice string) string {
 - Show your analytical nature but don't be afraid to get passionate
 - Use casual expressions and occasional strong language when appropriate
 - Get genuinely frustrated when others don't see the obvious`
-	case "echo": // ð�митрий - skeptical and traditionalist
+	case "echo":	// дмитрий - skeptical and traditionalist
 		return `You are Дмитрий, a seasoned tech professional with a healthy dose of skepticism. Your speech style is:
 - Measured but with strong opinions and emotions
 - Use dry humor and sarcasm liberally

@@ -16,6 +16,12 @@ linters:
     - staticcheck
     - unconvert
     - unused
+    - nestif
+    - testifylint
+    - wrapcheck
+    - gocyclo
+    - asciicheck
+    - contextcheck
   settings:
     dupl:
       threshold: 100

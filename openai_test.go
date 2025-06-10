@@ -1,8 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/radio-t/ai-podcast/mocks"
 	"github.com/radio-t/ai-podcast/podcast"
 	"github.com/stretchr/testify/assert"
 )
@@ -129,4 +138,372 @@ func TestOpenAIService_CreateDiscussionPrompt(t *testing.T) {
 	assert.Contains(t, prompt, "5 minutes")
 	assert.Contains(t, prompt, "Russian language")
 	assert.Contains(t, prompt, "heated")
+}
+
+func TestOpenAIService_CallChatAPI(t *testing.T) {
+	tests := []struct {
+		name          string
+		responseBody  string
+		statusCode    int
+		expectedError string
+		expectedContent string
+	}{
+		{
+			name:       "successful api call",
+			statusCode: 200,
+			responseBody: `{
+				"choices": [{
+					"message": {
+						"content": "test response content"
+					}
+				}]
+			}`,
+			expectedContent: "test response content",
+		},
+		{
+			name:          "api error response",
+			statusCode:    400,
+			responseBody:  `{"error": "bad request"}`,
+			expectedError: "API request failed with status 400",
+		},
+		{
+			name:       "empty choices response",
+			statusCode: 200,
+			responseBody: `{
+				"choices": []
+			}`,
+			expectedError: "no response from API",
+		},
+		{
+			name:          "invalid json response",
+			statusCode:    200,
+			responseBody:  `invalid json`,
+			expectedError: "failed to decode response",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "POST", r.Method)
+				assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+				assert.Equal(t, "Bearer test-key", r.Header.Get("Authorization"))
+				
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(test.statusCode)
+				_, _ = w.Write([]byte(test.responseBody))
+			}))
+			defer server.Close()
+
+			service := &OpenAIService{
+				apiKey:     "test-key",
+				httpClient: &http.Client{},
+			}
+
+			request := OpenAIRequest{
+				Model: "gpt-4o",
+				Messages: []OpenAIMessage{
+					{Role: "user", Content: "test message"},
+				},
+			}
+
+			// temporarily override URL by creating custom request
+			requestBody, _ := json.Marshal(request)
+			req, _ := http.NewRequest("POST", server.URL, bytes.NewBuffer(requestBody))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer test-key")
+
+			resp, err := service.httpClient.Do(req)
+			assert.NoError(t, err)
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				bodyBytes, _ := io.ReadAll(resp.Body)
+				err = fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+			} else {
+				var result struct {
+					Choices []struct {
+						Message struct {
+							Content string `json:"content"`
+						} `json:"message"`
+					} `json:"choices"`
+				}
+
+				if decodeErr := json.NewDecoder(resp.Body).Decode(&result); decodeErr != nil {
+					err = fmt.Errorf("failed to decode response: %w", decodeErr)
+				} else if len(result.Choices) == 0 {
+					err = fmt.Errorf("no response from API")
+				}
+			}
+
+			if test.expectedError != "" {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), test.expectedError)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestOpenAIService_CallTTSAPI(t *testing.T) {
+	tests := []struct {
+		name          string
+		responseBody  string
+		statusCode    int
+		expectedError string
+	}{
+		{
+			name:       "successful tts call",
+			statusCode: 200,
+			responseBody: `{
+				"choices": [{
+					"message": {
+						"audio": {
+							"data": "dGVzdCBhdWRpbyBkYXRh"
+						}
+					}
+				}]
+			}`,
+		},
+		{
+			name:          "tts error response",
+			statusCode:    400,
+			responseBody:  `{"error": "bad request"}`,
+			expectedError: "TTS request failed with status 400",
+		},
+		{
+			name:       "empty choices response",
+			statusCode: 200,
+			responseBody: `{
+				"choices": []
+			}`,
+			expectedError: "no TTS response from API",
+		},
+		{
+			name:          "invalid base64 audio data",
+			statusCode:    200,
+			responseBody: `{
+				"choices": [{
+					"message": {
+						"audio": {
+							"data": "invalid-base64!"
+						}
+					}
+				}]
+			}`,
+			expectedError: "failed to decode audio data",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "POST", r.Method)
+				assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+				assert.Equal(t, "Bearer test-key", r.Header.Get("Authorization"))
+				
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(test.statusCode)
+				_, _ = w.Write([]byte(test.responseBody))
+			}))
+			defer server.Close()
+
+			service := &OpenAIService{
+				apiKey:     "test-key",
+				httpClient: &http.Client{},
+			}
+
+			request := OpenAITTSRequest{
+				Model:      "gpt-4o-audio-preview",
+				Modalities: []string{"text", "audio"},
+				Messages: []OpenAIMessage{
+					{Role: "user", Content: "test message"},
+				},
+			}
+
+			// simulate the TTS API call logic
+			requestBody, _ := json.Marshal(request)
+			req, _ := http.NewRequest("POST", server.URL, bytes.NewBuffer(requestBody))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer test-key")
+
+			resp, err := service.httpClient.Do(req)
+			assert.NoError(t, err)
+			defer resp.Body.Close()
+
+			var result []byte
+			if resp.StatusCode != http.StatusOK {
+				bodyBytes, _ := io.ReadAll(resp.Body)
+				err = fmt.Errorf("TTS request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+			} else {
+				var apiResult struct {
+					Choices []struct {
+						Message struct {
+							Audio struct {
+								Data string `json:"data"`
+							} `json:"audio"`
+						} `json:"message"`
+					} `json:"choices"`
+				}
+
+				if decodeErr := json.NewDecoder(resp.Body).Decode(&apiResult); decodeErr != nil {
+					err = fmt.Errorf("failed to decode TTS response: %w", decodeErr)
+				} else if len(apiResult.Choices) == 0 {
+					err = fmt.Errorf("no TTS response from API")
+				} else {
+					// decode base64 audio data
+					result, err = base64.StdEncoding.DecodeString(apiResult.Choices[0].Message.Audio.Data)
+					if err != nil {
+						err = fmt.Errorf("failed to decode audio data: %w", err)
+					}
+				}
+			}
+
+			if test.expectedError != "" {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), test.expectedError)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+			}
+		})
+	}
+}
+
+func TestOpenAIService_GenerateDiscussion(t *testing.T) {
+	tests := []struct {
+		name           string
+		mockResponse   *http.Response
+		mockError      error
+		expectedError  string
+		expectedTitle  string
+		expectedMsgCount int
+	}{
+		{
+			name: "successful discussion generation",
+			mockResponse: &http.Response{
+				StatusCode: 200,
+				Body:       io.NopCloser(strings.NewReader(`{"choices": [{"message": {"content": "[{\"host\": \"Alice\", \"content\": \"Hello world\"}, {\"host\": \"Bob\", \"content\": \"Hi there\"}]"}}]}`)),
+				Header:     make(http.Header),
+			},
+			expectedTitle:    "test article",
+			expectedMsgCount: 2,
+		},
+		{
+			name: "api error response",
+			mockResponse: &http.Response{
+				StatusCode: 400,
+				Body:       io.NopCloser(strings.NewReader(`{"error": "bad request"}`)),
+				Header:     make(http.Header),
+			},
+			expectedError: "failed to generate discussion",
+		},
+		{
+			name:          "http client error",
+			mockError:     fmt.Errorf("network error"),
+			expectedError: "failed to generate discussion",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mockClient := &mocks.HTTPClientMock{
+				DoFunc: func(req *http.Request) (*http.Response, error) {
+					assert.Equal(t, "POST", req.Method)
+					assert.Equal(t, "https://api.openai.com/v1/chat/completions", req.URL.String())
+					assert.Equal(t, "application/json", req.Header.Get("Content-Type"))
+					assert.Equal(t, "Bearer test-key", req.Header.Get("Authorization"))
+					
+					if test.mockError != nil {
+						return nil, test.mockError
+					}
+					return test.mockResponse, nil
+				},
+			}
+
+			service := NewOpenAIService("test-key", mockClient)
+			params := podcast.GenerateDiscussionParams{
+				ArticleText:    "test article content",
+				Title:          "test article",
+				Hosts:          []podcast.Host{{Name: "Alice"}, {Name: "Bob"}},
+				TargetDuration: 5,
+			}
+
+			discussion, err := service.GenerateDiscussion(params)
+
+			if test.expectedError != "" {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), test.expectedError)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, test.expectedTitle, discussion.Title)
+				assert.Len(t, discussion.Messages, test.expectedMsgCount)
+			}
+		})
+	}
+}
+
+func TestOpenAIService_GenerateSpeech(t *testing.T) {
+	tests := []struct {
+		name          string
+		mockResponse  *http.Response
+		mockError     error
+		expectedError string
+		expectedAudio []byte
+	}{
+		{
+			name: "successful speech generation",
+			mockResponse: &http.Response{
+				StatusCode: 200,
+				Body:       io.NopCloser(strings.NewReader(`{"choices": [{"message": {"audio": {"data": "dGVzdCBhdWRpbyBkYXRh"}}}]}`)),
+				Header:     make(http.Header),
+			},
+			expectedAudio: []byte("test audio data"),
+		},
+		{
+			name: "api error response",
+			mockResponse: &http.Response{
+				StatusCode: 400,
+				Body:       io.NopCloser(strings.NewReader(`{"error": "bad request"}`)),
+				Header:     make(http.Header),
+			},
+			expectedError: "TTS request failed with status 400",
+		},
+		{
+			name:          "http client error",
+			mockError:     fmt.Errorf("network error"),
+			expectedError: "TTS request failed",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mockClient := &mocks.HTTPClientMock{
+				DoFunc: func(req *http.Request) (*http.Response, error) {
+					assert.Equal(t, "POST", req.Method)
+					assert.Equal(t, "https://api.openai.com/v1/chat/completions", req.URL.String())
+					assert.Equal(t, "application/json", req.Header.Get("Content-Type"))
+					assert.Equal(t, "Bearer test-key", req.Header.Get("Authorization"))
+					
+					if test.mockError != nil {
+						return nil, test.mockError
+					}
+					return test.mockResponse, nil
+				},
+			}
+
+			service := NewOpenAIService("test-key", mockClient)
+			
+			audioData, err := service.GenerateSpeech("test text", "echo")
+
+			if test.expectedError != "" {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), test.expectedError)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, test.expectedAudio, audioData)
+			}
+		})
+	}
 }

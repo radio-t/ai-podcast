@@ -106,6 +106,10 @@ func run(config podcast.Config) error {
 	openAI := NewOpenAIService(config.OpenAIAPIKey, nil)
 	audioProcessor := NewFFmpegAudioProcessor()
 
+	return runWithDependencies(config, articleFetcher, openAI, audioProcessor)
+}
+
+func runWithDependencies(config podcast.Config, articleFetcher ArticleFetcher, openAI OpenAIClient, audioProcessor AudioProcessor) error {
 	// 1. Fetch and extract article text
 	articleText, title, err := articleFetcher.Fetch(config.ArticleURL)
 	if err != nil {
