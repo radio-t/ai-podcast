@@ -1,30 +1,59 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
-	"strings"
+	"net/url"
+	"time"
 
-	"github.com/PuerkitoBio/goquery"
+	"github.com/markusmobius/go-trafilatura"
 )
 
-// HTTPArticleFetcher implements article fetching using HTTP
+// HTTPArticleFetcher implements article fetching using HTTP and trafilatura
 type HTTPArticleFetcher struct {
-	client *http.Client
+	client        *http.Client
+	timeout       time.Duration
+	userAgent     string
+	minTextLength int
 }
 
-// NewHTTPArticleFetcher creates a new HTTP article fetcher
+// NewHTTPArticleFetcher creates a new HTTP article fetcher with trafilatura
 func NewHTTPArticleFetcher(client *http.Client) *HTTPArticleFetcher {
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: 30 * time.Second}
 	}
-	return &HTTPArticleFetcher{client: client}
+	return &HTTPArticleFetcher{
+		client:        client,
+		timeout:       30 * time.Second,
+		userAgent:     "AI-Podcast/1.0",
+		minTextLength: 100,
+	}
 }
 
-// Fetch downloads and extracts text from the given URL
-func (f *HTTPArticleFetcher) Fetch(url string) (content, title string, err error) {
-	// #nosec G107 -- URL is provided by command-line flag
-	resp, err := f.client.Get(url)
+// Fetch downloads and extracts text from the given URL using trafilatura
+func (f *HTTPArticleFetcher) Fetch(urlStr string) (content, title string, err error) {
+	// validate URL
+	parsedURL, err := url.Parse(urlStr)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid URL: %w", err)
+	}
+
+	// create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), f.timeout)
+	defer cancel()
+
+	// create HTTP request with context
+	req, err := http.NewRequestWithContext(ctx, "GET", urlStr, http.NoBody)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// set user agent
+	req.Header.Set("User-Agent", f.userAgent)
+
+	// perform HTTP request
+	resp, err := f.client.Do(req)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to fetch URL: %w", err)
 	}
@@ -34,17 +63,38 @@ func (f *HTTPArticleFetcher) Fetch(url string) (content, title string, err error
 		return "", "", fmt.Errorf("failed to fetch article: status code %d", resp.StatusCode)
 	}
 
-	// parse the HTML
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to parse HTML: %w", err)
+	// extract content using trafilatura
+	options := trafilatura.Options{
+		EnableFallback:  true,
+		ExcludeComments: true,
+		ExcludeTables:   false,
+		IncludeImages:   false,
+		IncludeLinks:    false,
+		Deduplicate:     true,
+		OriginalURL:     parsedURL,
 	}
 
-	// extract title
-	title = doc.Find("title").Text()
+	result, err := trafilatura.Extract(resp.Body, options)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to extract content: %w", err)
+	}
 
-	// extract article content
-	content = f.extractContent(doc)
+	// validate content length
+	if len(result.ContentText) < f.minTextLength {
+		return "", "", fmt.Errorf("extracted content too short (%d chars, minimum %d)",
+			len(result.ContentText), f.minTextLength)
+	}
+
+	// get title from trafilatura result metadata
+	title = result.Metadata.Title
+	if title == "" {
+		title = result.Metadata.Sitename
+	}
+	if title == "" {
+		title = "Untitled Article"
+	}
+
+	content = result.ContentText
 
 	// limit article length for API calls
 	const maxContentLength = 8000
@@ -53,29 +103,4 @@ func (f *HTTPArticleFetcher) Fetch(url string) (content, title string, err error
 	}
 
 	return content, title, nil
-}
-
-// extractContent extracts the main text content from the HTML document
-func (f *HTTPArticleFetcher) extractContent(doc *goquery.Document) string {
-	var articleText strings.Builder
-
-	// first try to find article content in common containers
-	article := doc.Find("article, .article, .post, .content, main")
-	if article.Length() > 0 {
-		article.Find("p").Each(func(_ int, s *goquery.Selection) {
-			articleText.WriteString(s.Text())
-			articleText.WriteString("\n\n")
-		})
-	} else {
-		// fallback to all paragraphs
-		doc.Find("p").Each(func(_ int, s *goquery.Selection) {
-			// skip very short paragraphs which are likely not article content
-			if len(s.Text()) > 50 {
-				articleText.WriteString(s.Text())
-				articleText.WriteString("\n\n")
-			}
-		})
-	}
-
-	return strings.TrimSpace(articleText.String())
 }

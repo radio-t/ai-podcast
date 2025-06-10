@@ -199,7 +199,7 @@ func generateAndStreamToIcecast(params podcast.GenerateAndStreamParams, openAI O
 	fmt.Printf("Streaming to Icecast server at %s%s...\n", params.Config.IcecastURL, params.Config.IcecastMount)
 	err = audioProcessor.StreamFromConcat(concatFile, params.Config)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to stream from concat: %w", err)
 	}
 
 	fmt.Println("Podcast streaming completed successfully!")
@@ -316,7 +316,7 @@ func generateAndPlayLocally(params podcast.GenerateAndStreamParams, openAI OpenA
 		fmt.Printf("\nSaving podcast to %s...\n", params.Config.OutputFile)
 		err = audioProcessor.Concatenate(audioFiles, params.Config.OutputFile)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to concatenate audio files: %w", err)
 		}
 		fmt.Printf("Podcast saved to %s\n", params.Config.OutputFile)
 	}

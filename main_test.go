@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/radio-t/ai-podcast/mocks"
 	"github.com/radio-t/ai-podcast/podcast"
@@ -54,7 +55,7 @@ func TestCreateSpeechRequest(t *testing.T) {
 			assert.Equal(t, test.index, req.Index)
 			assert.Equal(t, test.expectedGender, req.Gender)
 			assert.Equal(t, test.expectedVoice, req.Voice)
-			assert.Equal(t, 1.0, req.Speed)
+			assert.InEpsilon(t, 1.0, req.Speed, 0.001)
 			assert.Equal(t, "test-key", req.APIKey)
 		})
 	}
@@ -111,27 +112,27 @@ func TestGenerateAndStreamWithMocks(t *testing.T) {
 
 	// test that mocks are working
 	discussion, err := mockOpenAI.GenerateDiscussion(podcast.GenerateDiscussionParams{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "Test Discussion", discussion.Title)
 
 	audio, err := mockOpenAI.GenerateSpeech("test", "echo")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, []byte("audio data"), audio)
 
 	err = mockAudio.Play("test.mp3")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	err = mockAudio.Concatenate([]string{"file1.mp3", "file2.mp3"}, "output.mp3")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	err = mockAudio.StreamToIcecast("input.mp3", podcast.Config{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	err = mockAudio.StreamFromConcat("concat.txt", podcast.Config{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	content, title, err := mockArticle.Fetch("http://example.com")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "article content", content)
 	assert.Equal(t, "article title", title)
 
@@ -266,10 +267,10 @@ func TestRunWithDependencies(t *testing.T) {
 			err := runWithDependencies(test.config, mockArticle, mockOpenAI, mockAudio)
 
 			if test.expectedError != "" {
-				assert.Error(t, err)
+				require.Error(t, err)
 				assert.Contains(t, err.Error(), test.expectedError)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			}
 		})
 	}
@@ -347,10 +348,10 @@ func TestGenerateAndStreamToIcecast(t *testing.T) {
 			err := generateAndStreamToIcecast(params, mockOpenAI, mockAudio)
 
 			if test.expectedError != "" {
-				assert.Error(t, err)
+				require.Error(t, err)
 				assert.Contains(t, err.Error(), test.expectedError)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			}
 		})
 	}
@@ -447,10 +448,10 @@ func TestGenerateAndPlayLocally(t *testing.T) {
 			err := generateAndPlayLocally(params, mockOpenAI, mockAudio)
 
 			if test.expectedError != "" {
-				assert.Error(t, err)
+				require.Error(t, err)
 				assert.Contains(t, err.Error(), test.expectedError)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			}
 		})
 	}
@@ -503,11 +504,11 @@ func TestGenerateSpeechSegments(t *testing.T) {
 			audioFiles, err := generateSpeechSegments(params, mockOpenAI)
 
 			if test.expectedError != "" {
-				assert.Error(t, err)
+				require.Error(t, err)
 				assert.Contains(t, err.Error(), test.expectedError)
 				assert.Nil(t, audioFiles)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				assert.Len(t, audioFiles, 2)
 				assert.Contains(t, audioFiles[0], "segment_000.mp3")
 				assert.Contains(t, audioFiles[1], "segment_001.mp3")
@@ -570,10 +571,10 @@ func TestSpeechGenerationWorker(t *testing.T) {
 			assert.Equal(t, 0, result.Index)
 			assert.Equal(t, "host1", result.Host)
 			if test.speechError {
-				assert.Error(t, result.Error)
+				require.Error(t, result.Error)
 				assert.Nil(t, result.AudioData)
 			} else {
-				assert.NoError(t, result.Error)
+				require.NoError(t, result.Error)
 				assert.Equal(t, []byte("audio data"), result.AudioData)
 			}
 
@@ -667,11 +668,11 @@ func TestProcessSegments(t *testing.T) {
 			audioFiles, err := processSegments(params, mockAudio)
 
 			if test.expectedError != "" {
-				assert.Error(t, err)
+				require.Error(t, err)
 				assert.Contains(t, err.Error(), test.expectedError)
 				assert.Nil(t, audioFiles)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				assert.Len(t, audioFiles, 1)
 			}
 		})
@@ -753,11 +754,11 @@ func TestProcessOrderedSegment(t *testing.T) {
 			result, err := processOrderedSegment(params, mockAudio)
 
 			if test.expectedError != "" {
-				assert.Error(t, err)
+				require.Error(t, err)
 				assert.Contains(t, err.Error(), test.expectedError)
 				assert.Nil(t, result)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				if test.shouldReturn {
 					assert.NotNil(t, result)
 					assert.Contains(t, *result, "segment_000.mp3")
@@ -811,10 +812,10 @@ func TestPlaySegment(t *testing.T) {
 			err := playSegment(params, mockAudio)
 
 			if test.expectedError != "" {
-				assert.Error(t, err)
+				require.Error(t, err)
 				assert.Contains(t, err.Error(), test.expectedError)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			}
 
 			assert.Len(t, mockAudio.PlayCalls(), 1)

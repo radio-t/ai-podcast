@@ -14,7 +14,37 @@ import (
 	"github.com/radio-t/ai-podcast/mocks"
 	"github.com/radio-t/ai-podcast/podcast"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// processTTSResponse extracts audio data from TTS API response
+func processTTSResponse(resp *http.Response) ([]byte, error) {
+	var apiResult struct {
+		Choices []struct {
+			Message struct {
+				Audio struct {
+					Data string `json:"data"`
+				} `json:"audio"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&apiResult); err != nil {
+		return nil, fmt.Errorf("failed to decode TTS response: %w", err)
+	}
+
+	if len(apiResult.Choices) == 0 {
+		return nil, fmt.Errorf("no TTS response from API")
+	}
+
+	// decode base64 audio data
+	result, err := base64.StdEncoding.DecodeString(apiResult.Choices[0].Message.Audio.Data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode audio data: %w", err)
+	}
+
+	return result, nil
+}
 
 func TestOpenAIService_PrepareHostDescriptions(t *testing.T) {
 	service := NewOpenAIService("test-key", nil)
@@ -35,7 +65,7 @@ func TestOpenAIService_ExtractMessages(t *testing.T) {
 	t.Run("valid json", func(t *testing.T) {
 		content := `[{"host": "Alice", "content": "Hello"}, {"host": "Bob", "content": "Hi there"}]`
 		messages, err := service.extractMessages(content)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.Len(t, messages, 2)
 		assert.Equal(t, "Alice", messages[0].Host)
 		assert.Equal(t, "Hello", messages[0].Content)
@@ -46,7 +76,7 @@ func TestOpenAIService_ExtractMessages(t *testing.T) {
 	t.Run("json with code blocks", func(t *testing.T) {
 		content := "```json\n[{\"host\": \"Alice\", \"content\": \"Hello\"}]\n```"
 		messages, err := service.extractMessages(content)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.Len(t, messages, 1)
 		assert.Equal(t, "Alice", messages[0].Host)
 		assert.Equal(t, "Hello", messages[0].Content)
@@ -55,7 +85,7 @@ func TestOpenAIService_ExtractMessages(t *testing.T) {
 	t.Run("json with simple code blocks", func(t *testing.T) {
 		content := "```\n[{\"host\": \"Alice\", \"content\": \"Hello\"}]\n```"
 		messages, err := service.extractMessages(content)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.Len(t, messages, 1)
 		assert.Equal(t, "Alice", messages[0].Host)
 		assert.Equal(t, "Hello", messages[0].Content)
@@ -64,7 +94,7 @@ func TestOpenAIService_ExtractMessages(t *testing.T) {
 	t.Run("json embedded in text", func(t *testing.T) {
 		content := "Here is the discussion: [{\"host\": \"Alice\", \"content\": \"Hello\"}] and that's it."
 		messages, err := service.extractMessages(content)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.Len(t, messages, 1)
 		assert.Equal(t, "Alice", messages[0].Host)
 		assert.Equal(t, "Hello", messages[0].Content)
@@ -73,7 +103,7 @@ func TestOpenAIService_ExtractMessages(t *testing.T) {
 	t.Run("invalid json", func(t *testing.T) {
 		content := "not valid json at all"
 		_, err := service.extractMessages(content)
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to parse response as JSON")
 	})
 }
@@ -142,10 +172,10 @@ func TestOpenAIService_CreateDiscussionPrompt(t *testing.T) {
 
 func TestOpenAIService_CallChatAPI(t *testing.T) {
 	tests := []struct {
-		name          string
-		responseBody  string
-		statusCode    int
-		expectedError string
+		name            string
+		responseBody    string
+		statusCode      int
+		expectedError   string
 		expectedContent string
 	}{
 		{
@@ -188,7 +218,7 @@ func TestOpenAIService_CallChatAPI(t *testing.T) {
 				assert.Equal(t, "POST", r.Method)
 				assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 				assert.Equal(t, "Bearer test-key", r.Header.Get("Authorization"))
-				
+
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(test.statusCode)
 				_, _ = w.Write([]byte(test.responseBody))
@@ -214,7 +244,7 @@ func TestOpenAIService_CallChatAPI(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer test-key")
 
 			resp, err := service.httpClient.Do(req)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			defer resp.Body.Close()
 
 			if resp.StatusCode != http.StatusOK {
@@ -237,10 +267,10 @@ func TestOpenAIService_CallChatAPI(t *testing.T) {
 			}
 
 			if test.expectedError != "" {
-				assert.Error(t, err)
+				require.Error(t, err)
 				assert.Contains(t, err.Error(), test.expectedError)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			}
 		})
 	}
@@ -281,8 +311,8 @@ func TestOpenAIService_CallTTSAPI(t *testing.T) {
 			expectedError: "no TTS response from API",
 		},
 		{
-			name:          "invalid base64 audio data",
-			statusCode:    200,
+			name:       "invalid base64 audio data",
+			statusCode: 200,
 			responseBody: `{
 				"choices": [{
 					"message": {
@@ -302,7 +332,7 @@ func TestOpenAIService_CallTTSAPI(t *testing.T) {
 				assert.Equal(t, "POST", r.Method)
 				assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 				assert.Equal(t, "Bearer test-key", r.Header.Get("Authorization"))
-				
+
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(test.statusCode)
 				_, _ = w.Write([]byte(test.responseBody))
@@ -329,7 +359,7 @@ func TestOpenAIService_CallTTSAPI(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer test-key")
 
 			resp, err := service.httpClient.Do(req)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			defer resp.Body.Close()
 
 			var result []byte
@@ -337,34 +367,14 @@ func TestOpenAIService_CallTTSAPI(t *testing.T) {
 				bodyBytes, _ := io.ReadAll(resp.Body)
 				err = fmt.Errorf("TTS request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
 			} else {
-				var apiResult struct {
-					Choices []struct {
-						Message struct {
-							Audio struct {
-								Data string `json:"data"`
-							} `json:"audio"`
-						} `json:"message"`
-					} `json:"choices"`
-				}
-
-				if decodeErr := json.NewDecoder(resp.Body).Decode(&apiResult); decodeErr != nil {
-					err = fmt.Errorf("failed to decode TTS response: %w", decodeErr)
-				} else if len(apiResult.Choices) == 0 {
-					err = fmt.Errorf("no TTS response from API")
-				} else {
-					// decode base64 audio data
-					result, err = base64.StdEncoding.DecodeString(apiResult.Choices[0].Message.Audio.Data)
-					if err != nil {
-						err = fmt.Errorf("failed to decode audio data: %w", err)
-					}
-				}
+				result, err = processTTSResponse(resp)
 			}
 
 			if test.expectedError != "" {
-				assert.Error(t, err)
+				require.Error(t, err)
 				assert.Contains(t, err.Error(), test.expectedError)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				assert.NotNil(t, result)
 			}
 		})
@@ -373,11 +383,11 @@ func TestOpenAIService_CallTTSAPI(t *testing.T) {
 
 func TestOpenAIService_GenerateDiscussion(t *testing.T) {
 	tests := []struct {
-		name           string
-		mockResponse   *http.Response
-		mockError      error
-		expectedError  string
-		expectedTitle  string
+		name             string
+		mockResponse     *http.Response
+		mockError        error
+		expectedError    string
+		expectedTitle    string
 		expectedMsgCount int
 	}{
 		{
@@ -414,7 +424,7 @@ func TestOpenAIService_GenerateDiscussion(t *testing.T) {
 					assert.Equal(t, "https://api.openai.com/v1/chat/completions", req.URL.String())
 					assert.Equal(t, "application/json", req.Header.Get("Content-Type"))
 					assert.Equal(t, "Bearer test-key", req.Header.Get("Authorization"))
-					
+
 					if test.mockError != nil {
 						return nil, test.mockError
 					}
@@ -433,10 +443,10 @@ func TestOpenAIService_GenerateDiscussion(t *testing.T) {
 			discussion, err := service.GenerateDiscussion(params)
 
 			if test.expectedError != "" {
-				assert.Error(t, err)
+				require.Error(t, err)
 				assert.Contains(t, err.Error(), test.expectedError)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				assert.Equal(t, test.expectedTitle, discussion.Title)
 				assert.Len(t, discussion.Messages, test.expectedMsgCount)
 			}
@@ -485,7 +495,7 @@ func TestOpenAIService_GenerateSpeech(t *testing.T) {
 					assert.Equal(t, "https://api.openai.com/v1/chat/completions", req.URL.String())
 					assert.Equal(t, "application/json", req.Header.Get("Content-Type"))
 					assert.Equal(t, "Bearer test-key", req.Header.Get("Authorization"))
-					
+
 					if test.mockError != nil {
 						return nil, test.mockError
 					}
@@ -494,14 +504,14 @@ func TestOpenAIService_GenerateSpeech(t *testing.T) {
 			}
 
 			service := NewOpenAIService("test-key", mockClient)
-			
+
 			audioData, err := service.GenerateSpeech("test text", "echo")
 
 			if test.expectedError != "" {
-				assert.Error(t, err)
+				require.Error(t, err)
 				assert.Contains(t, err.Error(), test.expectedError)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				assert.Equal(t, test.expectedAudio, audioData)
 			}
 		})

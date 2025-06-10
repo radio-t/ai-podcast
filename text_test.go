@@ -132,7 +132,7 @@ func TestTextProcessor_CalculateSpeechSpeed(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			result := tp.CalculateSpeechSpeed(tc.estimatedDuration, tc.targetDurationMinutes)
-			assert.Equal(t, tc.expected, result)
+			assert.InEpsilon(t, tc.expected, result, 0.001)
 		})
 	}
 }
@@ -151,7 +151,7 @@ func TestBackwardCompatibilityFunctions(t *testing.T) {
 
 	t.Run("calculateSpeechSpeed", func(t *testing.T) {
 		result := calculateSpeechSpeed(600, 10)
-		assert.Equal(t, 1.0, result)
+		assert.InEpsilon(t, 1.0, result, 0.001)
 	})
 
 	t.Run("estimateTotalDuration", func(t *testing.T) {
