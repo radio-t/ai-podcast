@@ -21,13 +21,13 @@ type HTTPArticleFetcher struct {
 // NewHTTPArticleFetcher creates a new HTTP article fetcher with trafilatura
 func NewHTTPArticleFetcher(client *http.Client) *HTTPArticleFetcher {
 	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
+		client = &http.Client{Timeout: defaultHTTPTimeout}
 	}
 	return &HTTPArticleFetcher{
 		client:        client,
-		timeout:       30 * time.Second,
+		timeout:       defaultHTTPTimeout,
 		userAgent:     "AI-Podcast/1.0",
-		minTextLength: 100,
+		minTextLength: minArticleTextLength,
 	}
 }
 
@@ -37,6 +37,11 @@ func (f *HTTPArticleFetcher) Fetch(urlStr string) (content, title string, err er
 	parsedURL, err := url.Parse(urlStr)
 	if err != nil {
 		return "", "", fmt.Errorf("invalid URL: %w", err)
+	}
+
+	// only allow http and https schemes
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return "", "", fmt.Errorf("unsupported URL scheme: %s (only http and https are allowed)", parsedURL.Scheme)
 	}
 
 	// create context with timeout
@@ -97,10 +102,8 @@ func (f *HTTPArticleFetcher) Fetch(urlStr string) (content, title string, err er
 	content = result.ContentText
 
 	// limit article length for API calls
-	const maxContentLength = 8000
-	if len(content) > maxContentLength {
-		content = content[:maxContentLength] + "..."
-	}
+	tp := NewTextProcessor()
+	content = tp.TruncateString(content, maxArticleContentLength)
 
 	return content, title, nil
 }

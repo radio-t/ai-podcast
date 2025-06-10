@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/radio-t/ai-podcast/podcast"
 )
@@ -29,7 +28,7 @@ type OpenAIService struct {
 // NewOpenAIService creates a new OpenAI service
 func NewOpenAIService(apiKey string, httpClient HTTPClient) *OpenAIService {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 2 * time.Minute}
+		httpClient = &http.Client{Timeout: openAIHTTPTimeout}
 	}
 	return &OpenAIService{
 		apiKey:     apiKey,
@@ -66,7 +65,7 @@ type OpenAITTSRequest struct {
 // GenerateDiscussion uses OpenAI API to create a discussion between hosts
 func (s *OpenAIService) GenerateDiscussion(params podcast.GenerateDiscussionParams) (podcast.Discussion, error) {
 	// calculate target number of messages based on duration
-	targetMessages := params.TargetDuration * 2 // 2 messages per minute
+	targetMessages := params.TargetDuration * messagesPerMinute
 
 	// create the system prompt
 	systemPrompt := s.createDiscussionPrompt(params.Hosts, targetMessages, params.TargetDuration)
@@ -78,8 +77,8 @@ func (s *OpenAIService) GenerateDiscussion(params podcast.GenerateDiscussionPara
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: fmt.Sprintf("Article Title: %s\n\nArticle Content: %s\n\nPlease respond in Russian language only.", params.Title, params.ArticleText)},
 		},
-		Temperature: 0.7,
-		MaxTokens:   4000,
+		Temperature: openAITemperature,
+		MaxTokens:   openAIMaxTokens,
 	}
 
 	// call the OpenAI API
@@ -238,7 +237,7 @@ IMPORTANT RULES:
 2. Hosts should actively disagree and challenge each other's points with strong language
 3. Include frequent interruptions and overlapping speech
 4. Show strong emotions - frustration, excitement, anger, skepticism
-5. Generate approximately %d messages total (about 2 messages per minute for %d minutes)
+5. Generate approximately %d messages total (about %d messages per minute for %d minutes)
 6. Each host should speak roughly the same number of times
 7. Use casual Russian expressions and strong language naturally
 8. Include heated debates and passionate arguments
@@ -254,7 +253,7 @@ The discussion should flow like this:
 Start with a brief introduction of the article topic before jumping into the heated discussion. This introduction should be casual and engaging, giving listeners context about what they're about to hear.
 
 Make it feel like a real tech podcast discussion with passionate experts who aren't afraid to get heated and use strong language when they disagree.
-`, hostDescriptions, targetMessages, targetDuration)
+`, hostDescriptions, targetMessages, messagesPerMinute, targetDuration)
 }
 
 // prepareHostDescriptions formats host information for the prompt
@@ -327,7 +326,7 @@ func getSpeakingStyle(voice string) string {
 - Show your personality through your voice - be the tech optimist who sees possibilities everywhere
 - Use informal Russian expressions and modern tech slang naturally
 - Get genuinely excited and sometimes interrupt others with your enthusiasm`
-	case "nova": // мария - analytical and pragmatic
+	case "nova": // Мария - analytical and pragmatic
 		return `You are Мария, an experienced economist with deep tech knowledge. Your speech style is:
 - Confident and direct, but still casual and engaging
 - Use data points and statistics naturally, but explain them in simple terms
@@ -338,7 +337,7 @@ func getSpeakingStyle(voice string) string {
 - Show your analytical nature but don't be afraid to get passionate
 - Use casual expressions and occasional strong language when appropriate
 - Get genuinely frustrated when others don't see the obvious`
-	case "echo": // дмитрий - skeptical and traditionalist
+	case "echo": // Дмитрий - skeptical and traditionalist
 		return `You are Дмитрий, a seasoned tech professional with a healthy dose of skepticism. Your speech style is:
 - Measured but with strong opinions and emotions
 - Use dry humor and sarcasm liberally

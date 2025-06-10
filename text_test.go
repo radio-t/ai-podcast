@@ -64,6 +64,10 @@ func TestTextProcessor_TruncateString(t *testing.T) {
 		{name: "longer than max", input: "Hello, world!", maxLength: 5, expected: "Hello..."},
 		{name: "empty string", input: "", maxLength: 5, expected: ""},
 		{name: "zero max length", input: "Hello", maxLength: 0, expected: "..."},
+		{name: "utf-8 russian text", input: "Привет, мир!", maxLength: 5, expected: "Приве..."},
+		{name: "utf-8 emoji", input: "Hello 👋 World 🌍", maxLength: 8, expected: "Hello 👋 ..."},
+		{name: "utf-8 chinese", input: "你好世界", maxLength: 2, expected: "你好..."},
+		{name: "mixed utf-8", input: "Hi 👋 Привет", maxLength: 7, expected: "Hi 👋 Пр..."},
 	}
 
 	for _, tc := range tests {

@@ -105,7 +105,7 @@ func TestHTTPArticleFetcher_Fetch(t *testing.T) {
 			content, title, err := fetcher.Fetch(server.URL)
 
 			if tc.expectError {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
 				assert.Equal(t, tc.expectedTitle, title)
@@ -193,4 +193,71 @@ type failingTransport struct{}
 
 func (f *failingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return nil, io.ErrUnexpectedEOF
+}
+
+func TestHTTPArticleFetcher_URLSchemeValidation(t *testing.T) {
+	fetcher := NewHTTPArticleFetcher(&http.Client{})
+
+	tests := []struct {
+		name        string
+		url         string
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name:        "valid http URL",
+			url:         "http://example.com/article",
+			expectError: true, // will fail on network, but not on scheme validation
+			errorMsg:    "failed to fetch",
+		},
+		{
+			name:        "valid https URL",
+			url:         "https://example.com/article",
+			expectError: true, // will fail on network, but not on scheme validation
+			errorMsg:    "failed to fetch",
+		},
+		{
+			name:        "invalid ftp scheme",
+			url:         "ftp://example.com/article",
+			expectError: true,
+			errorMsg:    "unsupported URL scheme: ftp",
+		},
+		{
+			name:        "invalid file scheme",
+			url:         "file:///etc/passwd",
+			expectError: true,
+			errorMsg:    "unsupported URL scheme: file",
+		},
+		{
+			name:        "invalid javascript scheme",
+			url:         "javascript:alert('xss')",
+			expectError: true,
+			errorMsg:    "unsupported URL scheme: javascript",
+		},
+		{
+			name:        "no scheme",
+			url:         "example.com/article",
+			expectError: true,
+			errorMsg:    "unsupported URL scheme: ",
+		},
+		{
+			name:        "malformed URL",
+			url:         "://invalid-url",
+			expectError: true,
+			errorMsg:    "invalid URL",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := fetcher.Fetch(tc.url)
+			if tc.expectError {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.errorMsg)
+			} else {
+				// in this test, all cases should error (either on scheme or network)
+				require.Error(t, err)
+			}
+		})
+	}
 }

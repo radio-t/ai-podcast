@@ -190,7 +190,7 @@ func generateAndStreamToIcecast(params podcast.GenerateAndStreamParams, openAI O
 	}
 
 	// create concat file for ffmpeg
-	concatFile, err := saveToConcatFile(tempDir, audioFiles)
+	concatFile, err := createConcatFile(tempDir, audioFiles)
 	if err != nil {
 		return err
 	}
@@ -260,8 +260,7 @@ func generateAndPlayLocally(params podcast.GenerateAndStreamParams, openAI OpenA
 	stopChan := make(chan struct{})
 
 	// create a buffer for pre-generated segments
-	bufferSize := 2
-	segmentBuffer := make([]podcast.SpeechSegment, 0, bufferSize)
+	segmentBuffer := make([]podcast.SpeechSegment, 0, preGeneratedSegmentsBuffer)
 	bufferMutex := sync.Mutex{}
 
 	// start background worker for speech generation
@@ -276,7 +275,7 @@ func generateAndPlayLocally(params podcast.GenerateAndStreamParams, openAI OpenA
 	// start pre-generating segments
 	fmt.Println("Starting pre-generation of segments...")
 	currentIndex := 0
-	for i := 0; i < bufferSize && currentIndex < len(params.Discussion.Messages); i++ {
+	for i := 0; i < preGeneratedSegmentsBuffer && currentIndex < len(params.Discussion.Messages); i++ {
 		msg := params.Discussion.Messages[currentIndex]
 		reqParams := podcast.CreateSpeechRequestParams{
 			Msg:     msg,
@@ -390,7 +389,7 @@ func processSegments(params podcast.ProcessSegmentsParams, audioProcessor AudioP
 		select {
 		case segment = <-params.ResultChan:
 			fmt.Printf("Received segment %d from %s\n", segment.Index, segment.Host)
-		case <-time.After(30 * time.Second):
+		case <-time.After(speechGenerationTimeout):
 			fmt.Println("Timeout waiting for speech generation!")
 			return nil, fmt.Errorf("timeout waiting for speech generation")
 		}
@@ -477,7 +476,7 @@ func processOrderedSegment(params podcast.ProcessOrderedSegmentParams, audioProc
 func playSegment(params podcast.PlaySegmentParams, audioProcessor AudioProcessor) error {
 	playStartTime := time.Now()
 	fmt.Printf("\nPlaying audio from %s (message %d)...\n", params.Segment.Host, params.Index+1)
-	fmt.Printf("Text: %s\n", truncateString(params.Segment.Msg.Content, 50))
+	fmt.Printf("Text: %s\n", truncateString(params.Segment.Msg.Content, displayTruncateLength))
 
 	err := audioProcessor.Play(params.Filename)
 	if err != nil {

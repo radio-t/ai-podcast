@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -21,6 +22,14 @@ func NewFFmpegAudioProcessor() *FFmpegAudioProcessor {
 
 // Play plays an audio file using the system's default audio player
 func (p *FFmpegAudioProcessor) Play(filename string) error {
+	// check if file exists before attempting to play
+	if _, err := os.Stat(filename); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("audio file does not exist: %s", filename)
+		}
+		return fmt.Errorf("failed to check audio file: %w", err)
+	}
+
 	var cmd *exec.Cmd
 
 	switch runtime.GOOS {
@@ -72,7 +81,9 @@ func (p *FFmpegAudioProcessor) Concatenate(files []string, outputFile string) er
 	// write the concat file
 	var concatContent strings.Builder
 	for _, file := range files {
-		concatContent.WriteString(fmt.Sprintf("file '%s'\n", file))
+		// escape single quotes in filenames for ffmpeg concat format
+		safeFile := strings.ReplaceAll(file, "'", "'\\''")
+		concatContent.WriteString(fmt.Sprintf("file '%s'\n", safeFile))
 	}
 	if err := os.WriteFile(concatFile, []byte(concatContent.String()), 0o600); err != nil {
 		return fmt.Errorf("failed to write concat file: %w", err)
@@ -104,8 +115,13 @@ func (p *FFmpegAudioProcessor) Concatenate(files []string, outputFile string) er
 // StreamToIcecast streams audio to an Icecast server
 func (p *FFmpegAudioProcessor) StreamToIcecast(inputFile string, config podcast.Config) error {
 	// construct Icecast URL with authentication
-	icecastURL := fmt.Sprintf("icecast://%s:%s@%s%s",
-		config.IcecastUser, config.IcecastPass, config.IcecastURL, config.IcecastMount)
+	u := url.URL{
+		Scheme: "icecast",
+		User:   url.UserPassword(config.IcecastUser, config.IcecastPass),
+		Host:   config.IcecastURL,
+		Path:   config.IcecastMount,
+	}
+	icecastURL := u.String()
 
 	// build the ffmpeg command
 	args := []string{
@@ -133,8 +149,13 @@ func (p *FFmpegAudioProcessor) StreamToIcecast(inputFile string, config podcast.
 // StreamFromConcat streams audio files listed in a concat file to Icecast
 func (p *FFmpegAudioProcessor) StreamFromConcat(concatFile string, config podcast.Config) error {
 	// construct Icecast URL with authentication
-	icecastURL := fmt.Sprintf("icecast://%s:%s@%s%s",
-		config.IcecastUser, config.IcecastPass, config.IcecastURL, config.IcecastMount)
+	u := url.URL{
+		Scheme: "icecast",
+		User:   url.UserPassword(config.IcecastUser, config.IcecastPass),
+		Host:   config.IcecastURL,
+		Path:   config.IcecastMount,
+	}
+	icecastURL := u.String()
 
 	// build the ffmpeg command
 	args := []string{
@@ -165,16 +186,13 @@ func createConcatFile(tempDir string, audioFiles []string) (string, error) {
 	concatFile := fmt.Sprintf("%s/concat.txt", tempDir)
 	var concatContent strings.Builder
 	for _, file := range audioFiles {
-		concatContent.WriteString(fmt.Sprintf("file '%s'\n", file))
+		// escape single quotes in filenames for ffmpeg concat format
+		safeFile := strings.ReplaceAll(file, "'", "'\\''")
+		concatContent.WriteString(fmt.Sprintf("file '%s'\n", safeFile))
 	}
 	err := os.WriteFile(concatFile, []byte(concatContent.String()), 0o600)
 	if err != nil {
 		return "", fmt.Errorf("failed to write concat file: %w", err)
 	}
 	return concatFile, nil
-}
-
-// saveToConcatFile is a wrapper for backward compatibility
-func saveToConcatFile(tempDir string, audioFiles []string) (string, error) {
-	return createConcatFile(tempDir, audioFiles)
 }

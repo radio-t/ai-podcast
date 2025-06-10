@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"unicode/utf8"
 
 	"github.com/radio-t/ai-podcast/podcast"
 )
@@ -28,11 +29,11 @@ func (tp *TextProcessor) EstimateAudioDuration(text string) float64 {
 		}
 	}
 
-	// estimate word count (characters ÷ 5.5)
-	estimatedWords := float64(charCount) / 5.5
+	// estimate word count
+	estimatedWords := float64(charCount) / avgCharsPerWordRussian
 
-	// calculate duration in seconds (words ÷ 160 × 60)
-	durationSeconds := estimatedWords / 160.0 * 60.0
+	// calculate duration in seconds
+	durationSeconds := estimatedWords / avgWordsPerMinuteRussian * 60.0
 
 	return durationSeconds
 }
@@ -57,17 +58,25 @@ func (tp *TextProcessor) CalculateSpeechSpeed(estimatedDuration float64, targetD
 	targetDurationSeconds := float64(targetDurationMinutes * 60)
 
 	// if estimated duration is significantly different from target, adjust speed
-	// but keep it within reasonable bounds (0.8-1.2)
+	// but keep it within reasonable bounds
 	speechSpeed = targetDurationSeconds / estimatedDuration
-	return math.Max(0.8, math.Min(1.2, speechSpeed))
+	return math.Max(minSpeechSpeed, math.Min(maxSpeechSpeed, speechSpeed))
 }
 
 // TruncateString truncates a string to the specified length and adds "..." if truncated
+// it ensures UTF-8 characters are not broken
 func (tp *TextProcessor) TruncateString(s string, maxLength int) string {
-	if len(s) <= maxLength {
+	if utf8.RuneCountInString(s) <= maxLength {
 		return s
 	}
-	return s[:maxLength] + "..."
+
+	// convert to runes to handle multi-byte characters properly
+	runes := []rune(s)
+	if len(runes) <= maxLength {
+		return s
+	}
+
+	return string(runes[:maxLength]) + "..."
 }
 
 // Keep these as package-level functions for backward compatibility
