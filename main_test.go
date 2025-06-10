@@ -2,160 +2,156 @@ package main
 
 import (
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/radio-t/ai-podcast/mocks"
+	"github.com/radio-t/ai-podcast/podcast"
 )
 
-func TestEstimateAudioDuration(t *testing.T) {
+func TestCreateSpeechRequest(t *testing.T) {
+	hostMap := map[string]podcast.HostInfo{
+		"Host1": {Gender: "male", Voice: "echo"},
+		"Host2": {Gender: "female", Voice: "nova"},
+	}
+
 	tests := []struct {
-		name     string
-		text     string
-		expected float64
+		name           string
+		msg            podcast.Message
+		index          int
+		expectedGender string
+		expectedVoice  string
 	}{
 		{
-			name:     "empty text",
-			text:     "",
-			expected: 0,
+			name:           "host in map",
+			msg:            podcast.Message{Host: "Host1", Content: "Test content"},
+			index:          0,
+			expectedGender: "male",
+			expectedVoice:  "echo",
 		},
 		{
-			name:     "short text",
-			text:     "Привет, как дела?",
-			expected: 1.02, // ~12 characters (excluding spaces) ÷ 5.5 = ~2.18 words ÷ 160 × 60 = ~0.82 seconds
-		},
-		{
-			name:     "longer text",
-			text:     "Искусственный интеллект - это имитация человеческого интеллекта в машинах, запрограммированных для мышления и обучения как люди.",
-			expected: 7.7, // ~70 characters (excluding spaces) ÷ 5.5 = ~12.73 words ÷ 160 × 60 = ~4.77 seconds
+			name:           "host not in map uses defaults",
+			msg:            podcast.Message{Host: "UnknownHost", Content: "Test content"},
+			index:          1,
+			expectedGender: "female",
+			expectedVoice:  "nova",
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := estimateAudioDuration(tc.text)
-			// Allow for small floating point differences
-			if result < tc.expected*0.9 || result > tc.expected*1.1 {
-				t.Errorf("estimateAudioDuration(%q) = %v, want %v (±10%%)", tc.text, result, tc.expected)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			params := podcast.CreateSpeechRequestParams{
+				Msg:     test.msg,
+				Index:   test.index,
+				HostMap: hostMap,
+				APIKey:  "test-key",
 			}
+
+			req := createSpeechRequest(params)
+
+			assert.Equal(t, test.msg, req.Msg)
+			assert.Equal(t, test.index, req.Index)
+			assert.Equal(t, test.expectedGender, req.Gender)
+			assert.Equal(t, test.expectedVoice, req.Voice)
+			assert.Equal(t, 1.0, req.Speed)
+			assert.Equal(t, "test-key", req.APIKey)
 		})
 	}
 }
 
-func TestTruncateString(t *testing.T) {
-	tests := []struct {
-		name      string
-		input     string
-		maxLength int
-		expected  string
-	}{
-		{
-			name:      "shorter than max",
-			input:     "Hello",
-			maxLength: 10,
-			expected:  "Hello",
-		},
-		{
-			name:      "equal to max",
-			input:     "Hello",
-			maxLength: 5,
-			expected:  "Hello",
-		},
-		{
-			name:      "longer than max",
-			input:     "Hello, world!",
-			maxLength: 5,
-			expected:  "Hello...",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := truncateString(tc.input, tc.maxLength)
-			if result != tc.expected {
-				t.Errorf("truncateString(%q, %d) = %q, want %q", tc.input, tc.maxLength, result, tc.expected)
-			}
-		})
-	}
+func TestNewOpenAIService(t *testing.T) {
+	t.Run("with nil http client", func(t *testing.T) {
+		service := NewOpenAIService("test-key", nil)
+		assert.Equal(t, "test-key", service.apiKey)
+		assert.NotNil(t, service.httpClient)
+		assert.Equal(t, 2*time.Minute, service.httpClient.Timeout)
+	})
 }
 
-func TestCreateHostMap(t *testing.T) {
-	hosts := []Host{
-		{
-			Name:   "TestHost1",
-			Gender: "male",
-			Voice:  "echo",
-		},
-		{
-			Name:   "TestHost2",
-			Gender: "female",
-			Voice:  "nova",
-		},
+// Test using generated mocks
+func TestGenerateAndStreamWithMocks(t *testing.T) {
+	mockOpenAI := &mocks.OpenAIClientMock{}
+	mockAudio := &mocks.AudioProcessorMock{}
+	mockArticle := &mocks.ArticleFetcherMock{}
+
+	// setup mock responses
+	mockOpenAI.GenerateDiscussionFunc = func(params podcast.GenerateDiscussionParams) (podcast.Discussion, error) {
+		return podcast.Discussion{
+			Title: "Test Discussion",
+			Messages: []podcast.Message{
+				{Host: "Host1", Content: "Hello"},
+				{Host: "Host2", Content: "Hi there"},
+			},
+		}, nil
 	}
 
-	hostMap := createHostMap(hosts)
-
-	// Check first host
-	if info, ok := hostMap["TestHost1"]; !ok {
-		t.Errorf("Expected TestHost1 to be in hostMap")
-	} else {
-		if info.gender != "male" {
-			t.Errorf("Expected gender male, got %s", info.gender)
-		}
-		if info.voice != "echo" {
-			t.Errorf("Expected voice echo, got %s", info.voice)
-		}
+	mockOpenAI.GenerateSpeechFunc = func(text, voice string) ([]byte, error) {
+		return []byte("audio data"), nil
 	}
 
-	// Check second host
-	if info, ok := hostMap["TestHost2"]; !ok {
-		t.Errorf("Expected TestHost2 to be in hostMap")
-	} else {
-		if info.gender != "female" {
-			t.Errorf("Expected gender female, got %s", info.gender)
-		}
-		if info.voice != "nova" {
-			t.Errorf("Expected voice nova, got %s", info.voice)
-		}
+	mockAudio.PlayFunc = func(filename string) error {
+		return nil
 	}
+
+	mockAudio.ConcatenateFunc = func(files []string, outputFile string) error {
+		return nil
+	}
+
+	mockAudio.StreamToIcecastFunc = func(inputFile string, config podcast.Config) error {
+		return nil
+	}
+
+	mockAudio.StreamFromConcatFunc = func(concatFile string, config podcast.Config) error {
+		return nil
+	}
+
+	mockArticle.FetchFunc = func(url string) (content, title string, err error) {
+		return "article content", "article title", nil
+	}
+
+	// test that mocks are working
+	discussion, err := mockOpenAI.GenerateDiscussion(podcast.GenerateDiscussionParams{})
+	assert.NoError(t, err)
+	assert.Equal(t, "Test Discussion", discussion.Title)
+
+	audio, err := mockOpenAI.GenerateSpeech("test", "echo")
+	assert.NoError(t, err)
+	assert.Equal(t, []byte("audio data"), audio)
+
+	err = mockAudio.Play("test.mp3")
+	assert.NoError(t, err)
+
+	err = mockAudio.Concatenate([]string{"file1.mp3", "file2.mp3"}, "output.mp3")
+	assert.NoError(t, err)
+
+	err = mockAudio.StreamToIcecast("input.mp3", podcast.Config{})
+	assert.NoError(t, err)
+
+	err = mockAudio.StreamFromConcat("concat.txt", podcast.Config{})
+	assert.NoError(t, err)
+
+	content, title, err := mockArticle.Fetch("http://example.com")
+	assert.NoError(t, err)
+	assert.Equal(t, "article content", content)
+	assert.Equal(t, "article title", title)
+
+	// verify mocks were called
+	assert.Len(t, mockOpenAI.GenerateDiscussionCalls(), 1)
+	assert.Len(t, mockOpenAI.GenerateSpeechCalls(), 1)
+	assert.Len(t, mockAudio.PlayCalls(), 1)
+	assert.Len(t, mockAudio.ConcatenateCalls(), 1)
+	assert.Len(t, mockAudio.StreamToIcecastCalls(), 1)
+	assert.Len(t, mockAudio.StreamFromConcatCalls(), 1)
+	assert.Len(t, mockArticle.FetchCalls(), 1)
 }
 
-func TestCalculateSpeechSpeed(t *testing.T) {
-	tests := []struct {
-		name                  string
-		estimatedDuration     float64
-		targetDurationMinutes int
-		expected              float64
-	}{
-		{
-			name:                  "zero estimated duration",
-			estimatedDuration:     0,
-			targetDurationMinutes: 10,
-			expected:              1.0,
-		},
-		{
-			name:                  "estimated equals target",
-			estimatedDuration:     600, // 10 minutes
-			targetDurationMinutes: 10,
-			expected:              1.0,
-		},
-		{
-			name:                  "estimated shorter than target",
-			estimatedDuration:     300, // 5 minutes
-			targetDurationMinutes: 10,
-			expected:              1.2, // would be 2.0 but capped at 1.2
-		},
-		{
-			name:                  "estimated longer than target",
-			estimatedDuration:     1200, // 20 minutes
-			targetDurationMinutes: 10,
-			expected:              0.8, // would be 0.5 but capped at 0.8
-		},
-	}
+func TestNewFFmpegAudioProcessor(t *testing.T) {
+	processor := NewFFmpegAudioProcessor()
+	assert.NotNil(t, processor)
+}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := calculateSpeechSpeed(tc.estimatedDuration, tc.targetDurationMinutes)
-			if result != tc.expected {
-				t.Errorf("calculateSpeechSpeed(%f, %d) = %f, want %f", 
-                  tc.estimatedDuration, tc.targetDurationMinutes, result, tc.expected)
-			}
-		})
-	}
+func TestNewHTTPArticleFetcher(t *testing.T) {
+	fetcher := NewHTTPArticleFetcher(nil)
+	assert.NotNil(t, fetcher)
 }
