@@ -12,12 +12,23 @@ import (
 	"github.com/radio-t/ai-podcast/podcast"
 )
 
+//go:generate moq -out mocks/command_runner.go -pkg mocks -skip-ensure -fmt goimports . CommandRunner
+
+// CommandRunner provides OS-specific command creation for audio playback
+type CommandRunner interface {
+	GetAudioCommand(filename string) (*exec.Cmd, error)
+}
+
 // FFmpegAudioProcessor implements audio processing using ffmpeg
-type FFmpegAudioProcessor struct{}
+type FFmpegAudioProcessor struct {
+	cmdRunner CommandRunner
+}
 
 // NewFFmpegAudioProcessor creates a new FFmpeg audio processor
 func NewFFmpegAudioProcessor() *FFmpegAudioProcessor {
-	return &FFmpegAudioProcessor{}
+	return &FFmpegAudioProcessor{
+		cmdRunner: &defaultCommandRunner{},
+	}
 }
 
 // Play plays an audio file using the system's default audio player
@@ -30,34 +41,9 @@ func (p *FFmpegAudioProcessor) Play(filename string) error {
 		return fmt.Errorf("failed to check audio file: %w", err)
 	}
 
-	var cmd *exec.Cmd
-
-	switch runtime.GOOS {
-	case "darwin": // macOS
-		cmd = exec.Command("afplay", filename)
-	case "windows":
-		cmd = exec.Command("cmd", "/C", "start", filename)
-	case "linux":
-		// try several common audio players
-		players := []string{"mpv", "mplayer", "ffplay", "aplay"}
-		for _, player := range players {
-			if _, err := exec.LookPath(player); err == nil {
-				if player == "aplay" {
-					// #nosec G204 -- Player is selected from a whitelist of known audio players
-					cmd = exec.Command(player, "-q", filename)
-				} else {
-					// #nosec G204 -- Player is selected from a whitelist of known audio players
-					cmd = exec.Command(player, filename, "-nodisp", "-autoexit", "-really-quiet")
-				}
-				break
-			}
-		}
-
-		if cmd == nil {
-			return fmt.Errorf("no suitable audio player found on your system")
-		}
-	default:
-		return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
+	cmd, err := p.cmdRunner.GetAudioCommand(filename)
+	if err != nil {
+		return fmt.Errorf("failed to get audio command: %w", err)
 	}
 
 	// run the command and wait for it to finish
@@ -195,4 +181,39 @@ func createConcatFile(tempDir string, audioFiles []string) (string, error) {
 		return "", fmt.Errorf("failed to write concat file: %w", err)
 	}
 	return concatFile, nil
+}
+
+// defaultCommandRunner is the default implementation of CommandRunner
+type defaultCommandRunner struct{}
+
+// GetAudioCommand returns the appropriate audio command for the current OS
+func (r *defaultCommandRunner) GetAudioCommand(filename string) (*exec.Cmd, error) {
+	// validate filename to prevent potential security issues
+	if strings.Contains(filename, "..") || strings.ContainsAny(filename, ";|&$`") {
+		return nil, fmt.Errorf("invalid filename: potential security risk")
+	}
+
+	switch runtime.GOOS {
+	case "darwin": // macOS
+		return exec.Command("afplay", filename), nil
+	case "windows":
+		return exec.Command("cmd", "/C", "start", filename), nil
+	case "linux":
+		// try several common audio players
+		players := []string{"mpv", "mplayer", "ffplay", "aplay"}
+		for _, player := range players {
+			if _, err := exec.LookPath(player); err == nil {
+				if player == "aplay" {
+					// #nosec G204 -- Player is selected from a whitelist of known audio players
+					return exec.Command(player, "-q", filename), nil
+				}
+				// #nosec G204 -- Player is selected from a whitelist of known audio players
+				// note: options must come before filename for mpv/mplayer/ffplay
+				return exec.Command(player, "-nodisp", "-autoexit", "-really-quiet", filename), nil
+			}
+		}
+		return nil, fmt.Errorf("no suitable audio player found on your system")
+	default:
+		return nil, fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
+	}
 }

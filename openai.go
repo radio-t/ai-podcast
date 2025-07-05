@@ -75,7 +75,11 @@ func (s *OpenAIService) GenerateDiscussion(params podcast.GenerateDiscussionPara
 		Model: "gpt-4o",
 		Messages: []OpenAIMessage{
 			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: fmt.Sprintf("Article Title: %s\n\nArticle Content: %s\n\nPlease respond in Russian language only.", params.Title, params.ArticleText)},
+			{
+				Role: "user",
+				Content: fmt.Sprintf("Article Title: %s\n\nArticle Content: %s\n\nPlease respond in Russian language only.",
+					params.Title, params.ArticleText),
+			},
 		},
 		Temperature: openAITemperature,
 		MaxTokens:   openAIMaxTokens,
@@ -226,11 +230,12 @@ func (s *OpenAIService) callTTSAPI(request OpenAITTSRequest) ([]byte, error) {
 func (s *OpenAIService) createDiscussionPrompt(hosts []podcast.Host, targetMessages, targetDuration int) string {
 	hostDescriptions := s.prepareHostDescriptions(hosts)
 
-	return fmt.Sprintf(`Generate a heated and passionate tech podcast discussion in Russian language between these hosts about the following article:
+	basePrompt := `Generate a heated and passionate tech podcast discussion in Russian language between these hosts about the following article:
 
 %s
 
-The discussion should be natural, sometimes heated, and reflect real human interactions. Hosts should actively engage with each other, frequently interrupt, strongly disagree, and show genuine emotions.
+The discussion should be natural, sometimes heated, and reflect real human interactions. `
+	basePrompt += `Hosts should actively engage with each other, frequently interrupt, strongly disagree, and show genuine emotions.
 
 IMPORTANT RULES:
 1. Each host's response should be 2-5 sentences long, with varying lengths
@@ -252,8 +257,9 @@ The discussion should flow like this:
 
 Start with a brief introduction of the article topic before jumping into the heated discussion. This introduction should be casual and engaging, giving listeners context about what they're about to hear.
 
-Make it feel like a real tech podcast discussion with passionate experts who aren't afraid to get heated and use strong language when they disagree.
-`, hostDescriptions, targetMessages, messagesPerMinute, targetDuration)
+Make it feel like a real tech podcast discussion with passionate experts who aren't afraid to get heated and use strong language when they disagree.`
+
+	return fmt.Sprintf(basePrompt, hostDescriptions, targetMessages, messagesPerMinute, targetDuration)
 }
 
 // prepareHostDescriptions formats host information for the prompt
@@ -315,7 +321,7 @@ func (s *OpenAIService) extractMessages(content string) ([]podcast.Message, erro
 // getSpeakingStyle returns the appropriate speaking style based on the voice
 func getSpeakingStyle(voice string) string {
 	switch voice {
-	case "onyx": // Алексей - optimistic and open-minded
+	case "onyx": // алексей - optimistic and open-minded
 		return `You are Алексей, a young tech enthusiast who's always excited about new developments. Your speech style is:
 - Super energetic and fast-paced, like you're about to burst with excitement
 - Use lots of modern tech slang and casual expressions
@@ -326,7 +332,7 @@ func getSpeakingStyle(voice string) string {
 - Show your personality through your voice - be the tech optimist who sees possibilities everywhere
 - Use informal Russian expressions and modern tech slang naturally
 - Get genuinely excited and sometimes interrupt others with your enthusiasm`
-	case "nova": // Мария - analytical and pragmatic
+	case "nova": // мария - analytical and pragmatic
 		return `You are Мария, an experienced economist with deep tech knowledge. Your speech style is:
 - Confident and direct, but still casual and engaging
 - Use data points and statistics naturally, but explain them in simple terms
@@ -337,7 +343,7 @@ func getSpeakingStyle(voice string) string {
 - Show your analytical nature but don't be afraid to get passionate
 - Use casual expressions and occasional strong language when appropriate
 - Get genuinely frustrated when others don't see the obvious`
-	case "echo": // Дмитрий - skeptical and traditionalist
+	case "echo": // дмитрий - skeptical and traditionalist
 		return `You are Дмитрий, a seasoned tech professional with a healthy dose of skepticism. Your speech style is:
 - Measured but with strong opinions and emotions
 - Use dry humor and sarcasm liberally

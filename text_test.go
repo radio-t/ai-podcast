@@ -68,6 +68,7 @@ func TestTextProcessor_TruncateString(t *testing.T) {
 		{name: "utf-8 emoji", input: "Hello 👋 World 🌍", maxLength: 8, expected: "Hello 👋 ..."},
 		{name: "utf-8 chinese", input: "你好世界", maxLength: 2, expected: "你好..."},
 		{name: "mixed utf-8", input: "Hi 👋 Привет", maxLength: 7, expected: "Hi 👋 Пр..."},
+		{name: "utf-8 byte length > maxLength but rune count <= maxLength", input: "Привет", maxLength: 10, expected: "Привет"},
 	}
 
 	for _, tc := range tests {

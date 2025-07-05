@@ -517,3 +517,137 @@ func TestOpenAIService_GenerateSpeech(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenAIService_CallAPIErrorCases(t *testing.T) {
+	t.Run("empty choices in chat response", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"choices": []}`))
+		}))
+		defer server.Close()
+
+		mockClient := &mocks.HTTPClientMock{
+			DoFunc: func(req *http.Request) (*http.Response, error) {
+				testReq, _ := http.NewRequest(req.Method, server.URL, req.Body)
+				testReq.Header = req.Header
+				return http.DefaultClient.Do(testReq)
+			},
+		}
+
+		service := &OpenAIService{
+			apiKey:     "test-key",
+			httpClient: mockClient,
+		}
+
+		req := OpenAIRequest{
+			Model: "gpt-4o",
+			Messages: []OpenAIMessage{
+				{Role: "user", Content: "test"},
+			},
+		}
+
+		_, err := service.callChatAPI(req)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no response from API")
+	})
+
+	t.Run("malformed json in chat response", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"choices": [{"message": {"content": }}}]}`)) // missing value
+		}))
+		defer server.Close()
+
+		mockClient := &mocks.HTTPClientMock{
+			DoFunc: func(req *http.Request) (*http.Response, error) {
+				testReq, _ := http.NewRequest(req.Method, server.URL, req.Body)
+				testReq.Header = req.Header
+				return http.DefaultClient.Do(testReq)
+			},
+		}
+
+		service := &OpenAIService{
+			apiKey:     "test-key",
+			httpClient: mockClient,
+		}
+
+		req := OpenAIRequest{
+			Model: "gpt-4o",
+			Messages: []OpenAIMessage{
+				{Role: "user", Content: "test"},
+			},
+		}
+
+		_, err := service.callChatAPI(req)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to decode response")
+	})
+
+	t.Run("empty choices in TTS response", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"choices": []}`))
+		}))
+		defer server.Close()
+
+		mockClient := &mocks.HTTPClientMock{
+			DoFunc: func(req *http.Request) (*http.Response, error) {
+				testReq, _ := http.NewRequest(req.Method, server.URL, req.Body)
+				testReq.Header = req.Header
+				return http.DefaultClient.Do(testReq)
+			},
+		}
+
+		service := NewOpenAIService("test-key", mockClient)
+		_, err := service.GenerateSpeech("test", "echo")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no TTS response from API")
+	})
+
+	t.Run("malformed json in TTS response", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"choices": [{"message": {"audio": {"data": }}}]}`)) // missing value
+		}))
+		defer server.Close()
+
+		mockClient := &mocks.HTTPClientMock{
+			DoFunc: func(req *http.Request) (*http.Response, error) {
+				testReq, _ := http.NewRequest(req.Method, server.URL, req.Body)
+				testReq.Header = req.Header
+				return http.DefaultClient.Do(testReq)
+			},
+		}
+
+		service := NewOpenAIService("test-key", mockClient)
+		_, err := service.GenerateSpeech("test", "echo")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to decode TTS response")
+	})
+
+	t.Run("invalid base64 in TTS response", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"choices": [{"message": {"audio": {"data": "!!!invalid-base64!!!"}}}]}`))
+		}))
+		defer server.Close()
+
+		mockClient := &mocks.HTTPClientMock{
+			DoFunc: func(req *http.Request) (*http.Response, error) {
+				testReq, _ := http.NewRequest(req.Method, server.URL, req.Body)
+				testReq.Header = req.Header
+				return http.DefaultClient.Do(testReq)
+			},
+		}
+
+		service := NewOpenAIService("test-key", mockClient)
+		_, err := service.GenerateSpeech("test", "echo")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to decode audio data")
+	})
+}
