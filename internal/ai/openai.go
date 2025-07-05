@@ -1,4 +1,4 @@
-package main
+package ai
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/radio-t/ai-podcast/internal/content"
 	"github.com/radio-t/ai-podcast/podcast"
 )
 
@@ -28,7 +29,7 @@ type OpenAIService struct {
 // NewOpenAIService creates a new OpenAI service
 func NewOpenAIService(apiKey string, httpClient HTTPClient) *OpenAIService {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: openAIHTTPTimeout}
+		httpClient = &http.Client{Timeout: content.OpenAIHTTPTimeout}
 	}
 	return &OpenAIService{
 		apiKey:     apiKey,
@@ -65,7 +66,7 @@ type OpenAITTSRequest struct {
 // GenerateDiscussion uses OpenAI API to create a discussion between hosts
 func (s *OpenAIService) GenerateDiscussion(params podcast.GenerateDiscussionParams) (podcast.Discussion, error) {
 	// calculate target number of messages based on duration
-	targetMessages := params.TargetDuration * messagesPerMinute
+	targetMessages := params.TargetDuration * content.MessagesPerMinute
 
 	// create the system prompt
 	systemPrompt := s.createDiscussionPrompt(params.Hosts, targetMessages, params.TargetDuration)
@@ -81,18 +82,18 @@ func (s *OpenAIService) GenerateDiscussion(params podcast.GenerateDiscussionPara
 					params.Title, params.ArticleText),
 			},
 		},
-		Temperature: openAITemperature,
-		MaxTokens:   openAIMaxTokens,
+		Temperature: content.OpenAITemperature,
+		MaxTokens:   content.OpenAIMaxTokens,
 	}
 
 	// call the OpenAI API
-	content, err := s.callChatAPI(request)
+	responseContent, err := s.callChatAPI(request)
 	if err != nil {
 		return podcast.Discussion{}, fmt.Errorf("failed to generate discussion: %w", err)
 	}
 
 	// extract and parse the JSON response
-	messages, err := s.extractMessages(content)
+	messages, err := s.extractMessages(responseContent)
 	if err != nil {
 		return podcast.Discussion{}, fmt.Errorf("failed to parse discussion: %w", err)
 	}
@@ -259,7 +260,7 @@ Start with a brief introduction of the article topic before jumping into the hea
 
 Make it feel like a real tech podcast discussion with passionate experts who aren't afraid to get heated and use strong language when they disagree.`
 
-	return fmt.Sprintf(basePrompt, hostDescriptions, targetMessages, messagesPerMinute, targetDuration)
+	return fmt.Sprintf(basePrompt, hostDescriptions, targetMessages, content.MessagesPerMinute, targetDuration)
 }
 
 // prepareHostDescriptions formats host information for the prompt
@@ -273,17 +274,17 @@ func (s *OpenAIService) prepareHostDescriptions(hosts []podcast.Host) string {
 }
 
 // extractMessages extracts and parses messages from the OpenAI response
-func (s *OpenAIService) extractMessages(content string) ([]podcast.Message, error) {
+func (s *OpenAIService) extractMessages(responseContent string) ([]podcast.Message, error) {
 	// the LLM may wrap the JSON in backticks or code block, so remove those
-	content = strings.TrimSpace(content)
-	if strings.HasPrefix(content, "```json") {
-		content = strings.TrimPrefix(content, "```json")
-		content = strings.TrimSuffix(content, "```")
-	} else if strings.HasPrefix(content, "```") {
-		content = strings.TrimPrefix(content, "```")
-		content = strings.TrimSuffix(content, "```")
+	responseContent = strings.TrimSpace(responseContent)
+	if strings.HasPrefix(responseContent, "```json") {
+		responseContent = strings.TrimPrefix(responseContent, "```json")
+		responseContent = strings.TrimSuffix(responseContent, "```")
+	} else if strings.HasPrefix(responseContent, "```") {
+		responseContent = strings.TrimPrefix(responseContent, "```")
+		responseContent = strings.TrimSuffix(responseContent, "```")
 	}
-	content = strings.TrimSpace(content)
+	responseContent = strings.TrimSpace(responseContent)
 
 	// parse the JSON into our structure
 	var rawMessages []struct {
@@ -291,14 +292,14 @@ func (s *OpenAIService) extractMessages(content string) ([]podcast.Message, erro
 		Content string `json:"content"`
 	}
 
-	err := json.Unmarshal([]byte(content), &rawMessages)
+	err := json.Unmarshal([]byte(responseContent), &rawMessages)
 	if err != nil {
 		// if unmarshaling fails, try to extract JSON from the text
-		startIdx := strings.Index(content, "[")
-		endIdx := strings.LastIndex(content, "]")
+		startIdx := strings.Index(responseContent, "[")
+		endIdx := strings.LastIndex(responseContent, "]")
 		if startIdx >= 0 && endIdx > startIdx {
-			content = content[startIdx : endIdx+1]
-			err = json.Unmarshal([]byte(content), &rawMessages)
+			responseContent = responseContent[startIdx : endIdx+1]
+			err = json.Unmarshal([]byte(responseContent), &rawMessages)
 		}
 
 		if err != nil {

@@ -8,6 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/radio-t/ai-podcast/internal/ai"
+	"github.com/radio-t/ai-podcast/internal/audio"
+	"github.com/radio-t/ai-podcast/internal/content"
 	"github.com/radio-t/ai-podcast/podcast"
 )
 
@@ -102,9 +105,9 @@ func main() {
 
 func run(config podcast.Config) error {
 	// create services
-	articleFetcher := NewHTTPArticleFetcher(nil)
-	openAI := NewOpenAIService(config.OpenAIAPIKey, nil)
-	audioProcessor := NewFFmpegAudioProcessor()
+	articleFetcher := content.NewHTTPArticleFetcher(nil)
+	openAI := ai.NewOpenAIService(config.OpenAIAPIKey, nil)
+	audioProcessor := audio.NewFFmpegAudioProcessor()
 
 	return runWithDependencies(config, articleFetcher, openAI, audioProcessor)
 }
@@ -156,7 +159,7 @@ func runWithDependencies(config podcast.Config, articleFetcher ArticleFetcher, o
 // generateAndStreamToIcecast generates speech for each message and streams to Icecast
 func generateAndStreamToIcecast(params podcast.GenerateAndStreamParams, openAI OpenAIClient, audioProcessor AudioProcessor) error {
 	// create text processor
-	textProcessor := NewTextProcessor()
+	textProcessor := content.NewTextProcessor()
 
 	// map host names to their gender and voice
 	hostMap := podcast.CreateHostMap(params.Config.Hosts)
@@ -190,9 +193,9 @@ func generateAndStreamToIcecast(params podcast.GenerateAndStreamParams, openAI O
 	}
 
 	// create concat file for ffmpeg
-	concatFile, err := createConcatFile(tempDir, audioFiles)
+	concatFile, err := audio.CreateConcatFile(tempDir, audioFiles)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create concat file: %w", err)
 	}
 
 	// stream to Icecast
@@ -260,7 +263,7 @@ func generateAndPlayLocally(params podcast.GenerateAndStreamParams, openAI OpenA
 	stopChan := make(chan struct{})
 
 	// create a buffer for pre-generated segments
-	segmentBuffer := make([]podcast.SpeechSegment, 0, preGeneratedSegmentsBuffer)
+	segmentBuffer := make([]podcast.SpeechSegment, 0, content.PreGeneratedSegmentsBuffer)
 	bufferMutex := sync.Mutex{}
 
 	// start background worker for speech generation
@@ -275,7 +278,7 @@ func generateAndPlayLocally(params podcast.GenerateAndStreamParams, openAI OpenA
 	// start pre-generating segments
 	fmt.Println("Starting pre-generation of segments...")
 	currentIndex := 0
-	for i := 0; i < preGeneratedSegmentsBuffer && currentIndex < len(params.Discussion.Messages); i++ {
+	for i := 0; i < content.PreGeneratedSegmentsBuffer && currentIndex < len(params.Discussion.Messages); i++ {
 		msg := params.Discussion.Messages[currentIndex]
 		reqParams := podcast.CreateSpeechRequestParams{
 			Msg:     msg,
@@ -389,7 +392,7 @@ func processSegments(params podcast.ProcessSegmentsParams, audioProcessor AudioP
 		select {
 		case segment = <-params.ResultChan:
 			fmt.Printf("Received segment %d from %s\n", segment.Index, segment.Host)
-		case <-time.After(speechGenerationTimeout):
+		case <-time.After(content.SpeechGenerationTimeout):
 			fmt.Println("Timeout waiting for speech generation!")
 			return nil, fmt.Errorf("timeout waiting for speech generation")
 		}
@@ -474,9 +477,10 @@ func processOrderedSegment(params podcast.ProcessOrderedSegmentParams, audioProc
 
 // playSegment plays a single audio segment
 func playSegment(params podcast.PlaySegmentParams, audioProcessor AudioProcessor) error {
+	textProcessor := content.NewTextProcessor()
 	playStartTime := time.Now()
 	fmt.Printf("\nPlaying audio from %s (message %d)...\n", params.Segment.Host, params.Index+1)
-	fmt.Printf("Text: %s\n", truncateString(params.Segment.Msg.Content, displayTruncateLength))
+	fmt.Printf("Text: %s\n", textProcessor.TruncateString(params.Segment.Msg.Content, content.DisplayTruncateLength))
 
 	err := audioProcessor.Play(params.Filename)
 	if err != nil {

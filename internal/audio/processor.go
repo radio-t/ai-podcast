@@ -1,4 +1,4 @@
-package main
+package audio
 
 import (
 	"fmt"
@@ -27,7 +27,7 @@ type FFmpegAudioProcessor struct {
 // NewFFmpegAudioProcessor creates a new FFmpeg audio processor
 func NewFFmpegAudioProcessor() *FFmpegAudioProcessor {
 	return &FFmpegAudioProcessor{
-		cmdRunner: &defaultCommandRunner{},
+		cmdRunner: &DefaultCommandRunner{},
 	}
 }
 
@@ -167,8 +167,8 @@ func (p *FFmpegAudioProcessor) StreamFromConcat(concatFile string, config podcas
 	return nil
 }
 
-// createConcatFile creates a concatenation file for ffmpeg
-func createConcatFile(tempDir string, audioFiles []string) (string, error) {
+// CreateConcatFile creates a concatenation file for ffmpeg
+func CreateConcatFile(tempDir string, audioFiles []string) (string, error) {
 	concatFile := fmt.Sprintf("%s/concat.txt", tempDir)
 	var concatContent strings.Builder
 	for _, file := range audioFiles {
@@ -183,11 +183,11 @@ func createConcatFile(tempDir string, audioFiles []string) (string, error) {
 	return concatFile, nil
 }
 
-// defaultCommandRunner is the default implementation of CommandRunner
-type defaultCommandRunner struct{}
+// DefaultCommandRunner is the default implementation of CommandRunner
+type DefaultCommandRunner struct{}
 
 // GetAudioCommand returns the appropriate audio command for the current OS
-func (r *defaultCommandRunner) GetAudioCommand(filename string) (*exec.Cmd, error) {
+func (r *DefaultCommandRunner) GetAudioCommand(filename string) (*exec.Cmd, error) {
 	// validate filename to prevent potential security issues
 	if strings.Contains(filename, "..") || strings.ContainsAny(filename, ";|&$`") {
 		return nil, fmt.Errorf("invalid filename: potential security risk")

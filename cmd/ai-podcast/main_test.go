@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/radio-t/ai-podcast/mocks"
+	"github.com/radio-t/ai-podcast/cmd/ai-podcast/mocks"
 	"github.com/radio-t/ai-podcast/podcast"
 )
 
@@ -59,14 +59,6 @@ func TestCreateSpeechRequest(t *testing.T) {
 			assert.Equal(t, "test-key", req.APIKey)
 		})
 	}
-}
-
-func TestNewOpenAIService(t *testing.T) {
-	t.Run("with nil http client", func(t *testing.T) {
-		service := NewOpenAIService("test-key", nil)
-		assert.Equal(t, "test-key", service.apiKey)
-		assert.NotNil(t, service.httpClient)
-	})
 }
 
 // Test using generated mocks
@@ -144,16 +136,6 @@ func TestGenerateAndStreamWithMocks(t *testing.T) {
 	assert.Len(t, mockAudio.StreamToIcecastCalls(), 1)
 	assert.Len(t, mockAudio.StreamFromConcatCalls(), 1)
 	assert.Len(t, mockArticle.FetchCalls(), 1)
-}
-
-func TestNewFFmpegAudioProcessor(t *testing.T) {
-	processor := NewFFmpegAudioProcessor()
-	assert.NotNil(t, processor)
-}
-
-func TestNewHTTPArticleFetcher(t *testing.T) {
-	fetcher := NewHTTPArticleFetcher(nil)
-	assert.NotNil(t, fetcher)
 }
 
 func TestRunWithDependencies(t *testing.T) {

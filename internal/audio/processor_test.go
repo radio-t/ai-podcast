@@ -1,4 +1,4 @@
-package main
+package audio
 
 import (
 	"fmt"
@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/radio-t/ai-podcast/mocks"
+	"github.com/radio-t/ai-podcast/internal/audio/mocks"
 	"github.com/radio-t/ai-podcast/podcast"
 )
 
@@ -97,7 +97,7 @@ func TestFFmpegAudioProcessor_PlayWithMock(t *testing.T) {
 }
 
 func TestDefaultCommandRunner_GetAudioCommand(t *testing.T) {
-	runner := &defaultCommandRunner{}
+	runner := &DefaultCommandRunner{}
 
 	tests := []struct {
 		name        string
@@ -328,7 +328,7 @@ func TestCreateConcatFile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			concatFile, err := createConcatFile(tmpDir, tt.files)
+			concatFile, err := CreateConcatFile(tmpDir, tt.files)
 			require.NoError(t, err)
 			defer os.Remove(concatFile)
 

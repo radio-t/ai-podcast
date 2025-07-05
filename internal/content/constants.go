@@ -1,26 +1,26 @@
-package main
+package content
 
 import "time"
 
 // http and network timeouts
 const (
 	defaultHTTPTimeout      = 30 * time.Second
-	openAIHTTPTimeout       = 2 * time.Minute
-	speechGenerationTimeout = 30 * time.Second
+	OpenAIHTTPTimeout       = 2 * time.Minute
+	SpeechGenerationTimeout = 30 * time.Second
 )
 
 // content processing limits
 const (
 	minArticleTextLength    = 100
 	maxArticleContentLength = 8000
-	displayTruncateLength   = 50
+	DisplayTruncateLength   = 50
 )
 
 // openai api parameters
 const (
-	openAITemperature = 0.7
-	openAIMaxTokens   = 4000
-	messagesPerMinute = 2
+	OpenAITemperature = 0.7
+	OpenAIMaxTokens   = 4000
+	MessagesPerMinute = 2
 )
 
 // text processing constants
@@ -33,5 +33,5 @@ const (
 
 // audio processing
 const (
-	preGeneratedSegmentsBuffer = 2
+	PreGeneratedSegmentsBuffer = 2
 )

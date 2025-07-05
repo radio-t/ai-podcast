@@ -1,4 +1,4 @@
-package main
+package ai
 
 import (
 	"bytes"
@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/radio-t/ai-podcast/mocks"
+	"github.com/radio-t/ai-podcast/internal/ai/mocks"
 	"github.com/radio-t/ai-podcast/podcast"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
