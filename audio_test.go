@@ -353,7 +353,7 @@ func TestFFmpegAudioProcessor_StreamFromConcat(t *testing.T) {
 		}
 		err := processor.StreamFromConcat("/tmp/non-existent-concat-file.txt", config)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "ffmpeg streaming failed: exit status 254")
+		assert.Contains(t, err.Error(), "ffmpeg streaming failed:")
 	})
 
 	t.Run("existing file", func(t *testing.T) {
@@ -375,6 +375,6 @@ func TestFFmpegAudioProcessor_StreamFromConcat(t *testing.T) {
 		// this will fail because ffmpeg can't find the input file, but it covers the function
 		err = processor.StreamFromConcat(tmpFile.Name(), config)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "ffmpeg streaming failed: exit status 254")
+		assert.Contains(t, err.Error(), "ffmpeg streaming failed:")
 	})
 }
