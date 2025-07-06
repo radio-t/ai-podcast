@@ -77,6 +77,7 @@ func (p *FFmpegAudioProcessor) Concatenate(files []string, outputFile string) er
 
 	// run ffmpeg to concatenate
 	args := []string{
+		"-y", // overwrite output file without asking
 		"-hide_banner",
 		"-loglevel", "error",
 		"-f", "concat",

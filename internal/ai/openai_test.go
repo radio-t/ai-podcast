@@ -62,8 +62,8 @@ func TestOpenAIService_PrepareHostDescriptions(t *testing.T) {
 func TestOpenAIService_ExtractMessages(t *testing.T) {
 	service := NewOpenAIService("test-key", nil)
 
-	t.Run("valid json", func(t *testing.T) {
-		content := `[{"host": "Alice", "content": "Hello"}, {"host": "Bob", "content": "Hi there"}]`
+	t.Run("valid dialog format", func(t *testing.T) {
+		content := "Alice: Hello\nBob: Hi there"
 		messages, err := service.extractMessages(content)
 		require.NoError(t, err)
 		assert.Len(t, messages, 2)
@@ -73,85 +73,84 @@ func TestOpenAIService_ExtractMessages(t *testing.T) {
 		assert.Equal(t, "Hi there", messages[1].Content)
 	})
 
-	t.Run("json with code blocks", func(t *testing.T) {
-		content := "```json\n[{\"host\": \"Alice\", \"content\": \"Hello\"}]\n```"
+	t.Run("dialog with extra spaces", func(t *testing.T) {
+		content := "  Alice  :  Hello there  \n  Bob  :  Hi back  "
 		messages, err := service.extractMessages(content)
 		require.NoError(t, err)
-		assert.Len(t, messages, 1)
+		assert.Len(t, messages, 2)
 		assert.Equal(t, "Alice", messages[0].Host)
-		assert.Equal(t, "Hello", messages[0].Content)
+		assert.Equal(t, "Hello there", messages[0].Content)
+		assert.Equal(t, "Bob", messages[1].Host)
+		assert.Equal(t, "Hi back", messages[1].Content)
 	})
 
-	t.Run("json with simple code blocks", func(t *testing.T) {
-		content := "```\n[{\"host\": \"Alice\", \"content\": \"Hello\"}]\n```"
+	t.Run("dialog with empty lines", func(t *testing.T) {
+		content := "Alice: Hello\n\nBob: Hi there\n\n"
 		messages, err := service.extractMessages(content)
 		require.NoError(t, err)
-		assert.Len(t, messages, 1)
+		assert.Len(t, messages, 2)
 		assert.Equal(t, "Alice", messages[0].Host)
 		assert.Equal(t, "Hello", messages[0].Content)
+		assert.Equal(t, "Bob", messages[1].Host)
+		assert.Equal(t, "Hi there", messages[1].Content)
 	})
 
-	t.Run("json embedded in text", func(t *testing.T) {
-		content := "Here is the discussion: [{\"host\": \"Alice\", \"content\": \"Hello\"}] and that's it."
-		messages, err := service.extractMessages(content)
-		require.NoError(t, err)
-		assert.Len(t, messages, 1)
-		assert.Equal(t, "Alice", messages[0].Host)
-		assert.Equal(t, "Hello", messages[0].Content)
-	})
-
-	t.Run("invalid json", func(t *testing.T) {
-		content := "not valid json at all"
+	t.Run("invalid format", func(t *testing.T) {
+		content := "not valid dialog format at all"
 		_, err := service.extractMessages(content)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to parse response as JSON")
+		assert.Contains(t, err.Error(), "no valid dialog lines found")
+	})
+
+	t.Run("mixed valid and invalid lines", func(t *testing.T) {
+		content := "Alice: Hello\ninvalid line\nBob: Hi there"
+		messages, err := service.extractMessages(content)
+		require.NoError(t, err)
+		assert.Len(t, messages, 2)
+		assert.Equal(t, "Alice", messages[0].Host)
+		assert.Equal(t, "Hello", messages[0].Content)
+		assert.Equal(t, "Bob", messages[1].Host)
+		assert.Equal(t, "Hi there", messages[1].Content)
 	})
 }
 
 func TestGetSpeakingStyle(t *testing.T) {
 	tests := []struct {
 		voice    string
-		contains []string
+		expected string
 	}{
 		{
 			voice:    "onyx",
-			contains: []string{"Алексей", "energetic", "enthusiastic"},
+			expected: "молодой техно-оптимист",
 		},
 		{
 			voice:    "nova",
-			contains: []string{"Мария", "analytical", "economist"},
+			expected: "аналитик, любит данные",
 		},
 		{
 			voice:    "echo",
-			contains: []string{"Дмитрий", "skepticism", "seasoned"},
+			expected: "скептик, видел всякое",
 		},
 		{
 			voice:    "unknown",
-			contains: nil,
+			expected: "",
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.voice, func(t *testing.T) {
 			style := getSpeakingStyle(test.voice)
-			if test.contains == nil {
-				assert.Empty(t, style)
-			} else {
-				for _, keyword := range test.contains {
-					assert.Contains(t, style, keyword)
-				}
-			}
+			assert.Equal(t, test.expected, style)
 		})
 	}
 }
 
 func TestCreateTTSSystemPrompt(t *testing.T) {
-	speakingStyle := "Test speaking style"
+	speakingStyle := "тестовый стиль"
 	result := createTTSSystemPrompt(speakingStyle)
-	assert.Contains(t, result, "Test speaking style")
-	assert.Contains(t, result, "tech podcast discussion")
-	assert.Contains(t, result, "Russian language")
-	assert.Contains(t, result, "natural reactions")
+	assert.Contains(t, result, "тестовый стиль")
+	assert.Contains(t, result, "подкасте")
+	assert.Contains(t, result, "русски")
 }
 
 func TestOpenAIService_CreateDiscussionPrompt(t *testing.T) {
@@ -164,10 +163,9 @@ func TestOpenAIService_CreateDiscussionPrompt(t *testing.T) {
 	prompt := service.createDiscussionPrompt(hosts, 10, 5)
 	assert.Contains(t, prompt, "Alice (female): Tech expert")
 	assert.Contains(t, prompt, "Bob (male): Economist")
-	assert.Contains(t, prompt, "10 messages total")
 	assert.Contains(t, prompt, "5 minutes")
-	assert.Contains(t, prompt, "Russian language")
-	assert.Contains(t, prompt, "heated")
+	assert.Contains(t, prompt, "Russian")
+	assert.Contains(t, prompt, "dialog format")
 }
 
 func TestOpenAIService_CallChatAPI(t *testing.T) {
@@ -394,7 +392,7 @@ func TestOpenAIService_GenerateDiscussion(t *testing.T) {
 			name: "successful discussion generation",
 			mockResponse: &http.Response{
 				StatusCode: 200,
-				Body:       io.NopCloser(strings.NewReader(`{"choices": [{"message": {"content": "[{\"host\": \"Alice\", \"content\": \"Hello world\"}, {\"host\": \"Bob\", \"content\": \"Hi there\"}]"}}]}`)),
+				Body:       io.NopCloser(strings.NewReader(`{"choices": [{"message": {"content": "Alice: Hello world\nBob: Hi there"}}]}`)),
 				Header:     make(http.Header),
 			},
 			expectedTitle:    "test article",

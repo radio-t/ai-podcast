@@ -228,39 +228,22 @@ func (s *OpenAIService) callTTSAPI(request OpenAITTSRequest) ([]byte, error) {
 }
 
 // createDiscussionPrompt creates the system prompt for the discussion
-func (s *OpenAIService) createDiscussionPrompt(hosts []podcast.Host, targetMessages, targetDuration int) string {
+func (s *OpenAIService) createDiscussionPrompt(hosts []podcast.Host, _, targetDuration int) string {
 	hostDescriptions := s.prepareHostDescriptions(hosts)
 
-	basePrompt := `Generate a heated and passionate tech podcast discussion in Russian language between these hosts about the following article:
+	basePrompt := `You are hosting a Russian tech podcast discussion about this article. The hosts are:
 
 %s
 
-The discussion should be natural, sometimes heated, and reflect real human interactions. `
-	basePrompt += `Hosts should actively engage with each other, frequently interrupt, strongly disagree, and show genuine emotions.
+Have a genuine, unscripted conversation about the article. Don't follow any rigid structure - just talk naturally like real people do. Get passionate about things you care about, interrupt each other when excited, disagree when you actually disagree.
 
-IMPORTANT RULES:
-1. Each host's response should be 2-5 sentences long, with varying lengths
-2. Hosts should actively disagree and challenge each other's points with strong language
-3. Include frequent interruptions and overlapping speech
-4. Show strong emotions - frustration, excitement, anger, skepticism
-5. Generate approximately %d messages total (about %d messages per minute for %d minutes)
-6. Each host should speak roughly the same number of times
-7. Use casual Russian expressions and strong language naturally
-8. Include heated debates and passionate arguments
-9. Make it feel like a real, unscripted discussion between passionate tech experts who aren't afraid to get heated
+Write it as simple dialog format:
+Имя: что говорит
+Имя: ответ
 
-Format the output as a JSON array of messages, where each message has a "host" field (the host's name) and a "content" field (what they say in Russian).
+Just let the conversation flow naturally for about %d minutes worth of talking.`
 
-The discussion should flow like this:
-1. Brief introduction of the article topic (1-2 messages)
-2. Main discussion with active engagement, interruptions, and heated disagreements
-3. Short summary of key points (1-2 messages)
-
-Start with a brief introduction of the article topic before jumping into the heated discussion. This introduction should be casual and engaging, giving listeners context about what they're about to hear.
-
-Make it feel like a real tech podcast discussion with passionate experts who aren't afraid to get heated and use strong language when they disagree.`
-
-	return fmt.Sprintf(basePrompt, hostDescriptions, targetMessages, content.MessagesPerMinute, targetDuration)
+	return fmt.Sprintf(basePrompt, hostDescriptions, targetDuration)
 }
 
 // prepareHostDescriptions formats host information for the prompt
@@ -275,45 +258,34 @@ func (s *OpenAIService) prepareHostDescriptions(hosts []podcast.Host) string {
 
 // extractMessages extracts and parses messages from the OpenAI response
 func (s *OpenAIService) extractMessages(responseContent string) ([]podcast.Message, error) {
-	// the LLM may wrap the JSON in backticks or code block, so remove those
-	responseContent = strings.TrimSpace(responseContent)
-	if strings.HasPrefix(responseContent, "```json") {
-		responseContent = strings.TrimPrefix(responseContent, "```json")
-		responseContent = strings.TrimSuffix(responseContent, "```")
-	} else if strings.HasPrefix(responseContent, "```") {
-		responseContent = strings.TrimPrefix(responseContent, "```")
-		responseContent = strings.TrimSuffix(responseContent, "```")
-	}
-	responseContent = strings.TrimSpace(responseContent)
+	lines := strings.Split(strings.TrimSpace(responseContent), "\n")
+	var messages []podcast.Message
 
-	// parse the JSON into our structure
-	var rawMessages []struct {
-		Host    string `json:"host"`
-		Content string `json:"content"`
-	}
-
-	err := json.Unmarshal([]byte(responseContent), &rawMessages)
-	if err != nil {
-		// if unmarshaling fails, try to extract JSON from the text
-		startIdx := strings.Index(responseContent, "[")
-		endIdx := strings.LastIndex(responseContent, "]")
-		if startIdx >= 0 && endIdx > startIdx {
-			responseContent = responseContent[startIdx : endIdx+1]
-			err = json.Unmarshal([]byte(responseContent), &rawMessages)
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
 		}
 
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse response as JSON: %w", err)
+		// parse format: "Name: content" or "Name : content"
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		host := strings.TrimSpace(parts[0])
+		msgContent := strings.TrimSpace(parts[1])
+
+		if host != "" && msgContent != "" {
+			messages = append(messages, podcast.Message{
+				Host:    host,
+				Content: msgContent,
+			})
 		}
 	}
 
-	// convert parsed messages to our Message type
-	messages := make([]podcast.Message, len(rawMessages))
-	for i, msg := range rawMessages {
-		messages[i] = podcast.Message{
-			Host:    msg.Host,
-			Content: msg.Content,
-		}
+	if len(messages) == 0 {
+		return nil, fmt.Errorf("no valid dialog lines found in response")
 	}
 
 	return messages, nil
@@ -322,40 +294,12 @@ func (s *OpenAIService) extractMessages(responseContent string) ([]podcast.Messa
 // getSpeakingStyle returns the appropriate speaking style based on the voice
 func getSpeakingStyle(voice string) string {
 	switch voice {
-	case "onyx": // алексей - optimistic and open-minded
-		return `You are Алексей, a young tech enthusiast who's always excited about new developments. Your speech style is:
-- Super energetic and fast-paced, like you're about to burst with excitement
-- Use lots of modern tech slang and casual expressions
-- Speak with a bright, enthusiastic tone, like you're sharing something amazing
-- Use short, punchy sentences with lots of emphasis
-- Add dramatic pauses before exciting news
-- Use casual interjections like "охуенно!", "заебись!", "пиздец как круто!"
-- Show your personality through your voice - be the tech optimist who sees possibilities everywhere
-- Use informal Russian expressions and modern tech slang naturally
-- Get genuinely excited and sometimes interrupt others with your enthusiasm`
-	case "nova": // мария - analytical and pragmatic
-		return `You are Мария, an experienced economist with deep tech knowledge. Your speech style is:
-- Confident and direct, but still casual and engaging
-- Use data points and statistics naturally, but explain them in simple terms
-- Speak with authority but keep it conversational
-- Use rhetorical questions and challenge others' views
-- Add sarcastic humor and witty comebacks
-- Include professional insights but explain them in everyday language
-- Show your analytical nature but don't be afraid to get passionate
-- Use casual expressions and occasional strong language when appropriate
-- Get genuinely frustrated when others don't see the obvious`
-	case "echo": // дмитрий - skeptical and traditionalist
-		return `You are Дмитрий, a seasoned tech professional with a healthy dose of skepticism. Your speech style is:
-- Measured but with strong opinions and emotions
-- Use dry humor and sarcasm liberally
-- Add frequent "ну..." and "хм..." reactions
-- Speak with a world-weary but passionate tone
-- Use longer, more complex sentences but with casual expressions
-- Include historical parallels and cautionary tales
-- Add strong skepticism with phrases like "бля, ну тут же очевидно..."
-- Show your personality through passionate, sometimes heated responses
-- Get genuinely angry when people ignore obvious risks
-- Use casual Russian expressions and occasional strong language`
+	case "onyx": // алексей
+		return "молодой техно-оптимист"
+	case "nova": // мария
+		return "аналитик, любит данные"
+	case "echo": // дмитрий
+		return "скептик, видел всякое"
 	default:
 		return ""
 	}
@@ -363,14 +307,5 @@ func getSpeakingStyle(voice string) string {
 
 // createTTSSystemPrompt creates the system prompt for TTS generation
 func createTTSSystemPrompt(speakingStyle string) string {
-	return speakingStyle + "\n\nYou are participating in a heated tech podcast discussion. Speak the following text in Russian language with your unique personality and style. Remember to:\n" +
-		"- Use very natural, casual conversational style\n" +
-		"- Add strong emotions and emphasis\n" +
-		"- Include lots of natural reactions and interjections\n" +
-		"- Use informal Russian expressions and modern slang\n" +
-		"- Speak like you're having a real argument with friends\n" +
-		"- Don't be afraid to use strong language when appropriate\n" +
-		"- Show genuine emotions - get excited, frustrated, angry\n" +
-		"- Interrupt others when you're passionate about something\n" +
-		"- Use casual expressions and modern tech slang naturally"
+	return fmt.Sprintf("Ты %s в подкасте о технологиях. Говори естественно по-русски, как обычный человек.", speakingStyle)
 }
